@@ -1,5 +1,5 @@
 # adv_data_aug_hmm
-Adversarial Data Augmentation for Anomaly Detection in Intelligent Autonomous Systems
+Castellini A., Masillo F., Azzalini D., Amigoni F., Farinelli A., Adversarial Data Augmentation for Anomaly Detection in Intelligent Autonomous Systems
 
 In order to use this software the user needs to create a conda environment (or alternatively having a Python3.8 valid installation with all the dependencies) with the following command:
 
@@ -35,6 +35,7 @@ PARAMETERS:
 	--reps [OPTIONAL] : number of repetitions of the whole process. If the train size specified is less than the total length 
 						of the train set then this is useful to see how starting from different time instants (taking a slice
 						from start to start+train_sizes of the data) can impact both on original and augmented performaces
+						(DEFAULT=1)
 
 
 OUTPUT:
