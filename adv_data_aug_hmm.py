@@ -608,18 +608,62 @@ if __name__ == '__main__':
     
     recognized_adv_methods = {'H':'Hellinger Distance', 'L':'Likelihood'}
     
-    path_train = sys.argv[1]
-    path_test = sys.argv[2]
-    path_gt = sys.argv[3]
-    output_dir = sys.argv[4]
-    train_sizes = sys.argv[5]
-    pca_components = sys.argv[6]
-    w = sys.argv[7]
-    eps = sys.argv[8]
-    it_aug = sys.argv[9]
-    max_states = sys.argv[10]
-    adv_method = sys.argv[11]
-    repetitions = sys.argv[12]
+    parameter_list = sys.argv
+    
+    if "--train" in parameter_list:
+        path_train = sys.argv[parameter_list.index("--train")+1]
+    else:
+        print("Mandatory parameter --train not found please check input parameters")
+        sys.exit()
+    if "--test" in parameter_list:
+        path_test = sys.argv[parameter_list.index("--test")+1]
+    else:
+        print("Mandatory parameter --test not found please check input parameters")
+        sys.exit()
+    if "--gt" in parameter_list:
+        path_gt = sys.argv[parameter_list.index("--gt")+1]
+    else:
+        print("Mandatory parameter --gt not found please check input parameters")
+        sys.exit()
+    if "--output_dir" in parameter_list:
+        output_dir = sys.argv[parameter_list.index("--output_dir")+1]
+    else:
+        print("Mandatory parameter --output_dir not found please check input parameters")
+        sys.exit()
+    if "--train_sizes" in parameter_list:
+        train_sizes = sys.argv[parameter_list.index("--train_sizes")+1]
+    else:
+        print("Mandatory parameter --train_sizes not found please check input parameters")
+        sys.exit()
+    if "--pca" in parameter_list:
+        pca_components = sys.argv[parameter_list.index("--pca")+1]
+    else:
+        pca_components = 4
+    if "--w" in parameter_list:
+        w = sys.argv[parameter_list.index("--w")+1]
+    else:
+        w = 100
+    if "--eps" in parameter_list:
+        eps = sys.argv[parameter_list.index("--eps")+1]
+    else:
+        eps = 0.05
+    if "--m" in parameter_list:
+        it_aug = sys.argv[parameter_list.index("--m")+1]
+    else:
+        it_aug = 3
+    if "--max_states" in parameter_list:
+        max_states = sys.argv[parameter_list.index("--max_states")+1]
+    else:
+        max_states = 20
+    if "--adv_method" in parameter_list:
+        adv_method = sys.argv[parameter_list.index("--adv_method")+1]
+    else:
+        adv_method = 'H'
+    if "--reps" in parameter_list:
+        repetitions = sys.argv[parameter_list.index("--reps")+1]
+    else:
+        repetitions = 1
+    
     
     if adv_method not in recognized_adv_methods:
         print("Adversarial method in input is not recognized")

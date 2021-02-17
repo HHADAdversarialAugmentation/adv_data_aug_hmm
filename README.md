@@ -14,7 +14,7 @@ How to call the function (example):
 
 	python adv_data_aug_hmm.py --train data/dataset_train.csv --test data/dataset_test.csv 
 		--gt data/dataset_ground_truth.csv --output_dir my_result --train_sizes 250,500,750 
-		--w 100 --eps 0.05 --m 3 --max_states 10 --adv_method H --reps 10
+		--pca 3 --w 100 --eps 0.05 --m 3 --max_states 10 --adv_method H --reps 10
 
 PARAMETERS:
 
@@ -23,7 +23,7 @@ PARAMETERS:
 	--gt : path where ground truth is
 	--output_dir : path where the user expects the output
 	--train_sizes : comma-separated list of lengths for slicing the train set into subsets
-	--pca_components [OPTIONAL] : number of PCA components to use, this is used to preprocess both train and test set. 
+	--pca [OPTIONAL] : number of PCA components to use, this is used to preprocess both train and test set. 
 					   If the data is already preprocessed either do not specify it or give 0 as input (DEFAULT=0)
 	--w [OPTIONAL] : window size (DEFAULT=100)
 	--eps [OPTIONAL] : distance boundary for the generation of adversarial examples (DEFAULT=0.05)
