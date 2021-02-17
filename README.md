@@ -49,8 +49,8 @@ In the output directory the user should expect the following results:
 	  (e.g. model_1_HHAD.pkl) and the augmented model (e.g. model_1_H-AUG.pkl)
 	
 
-If the user wishes to visualize a simple plot of F1 scores across train sizes for a given result, we make available a simple script called xxxxxx.py. It can be called as following:
+If the user wishes to visualize a simple plot of F1 scores across train sizes for a given result, we make available a simple script called plot_f1.py. It can be called as following:
 
-	python xxxxxx.py --result_dir my_result --adv_method H --train_sizes 250,500,750
+	python plot_f1.py --result_dir my_result --adv_method H --train_sizes 250,500,750
 	
 It will output a plot with two lines for the mean F1 score (across repetitions for a given train size), one for the baseline model and one for the augmented one.
