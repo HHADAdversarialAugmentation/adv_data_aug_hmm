@@ -9,5 +9,5 @@ from distutils.core import setup, Extension
 from Cython.Build import cythonize
 import numpy
 
-ext = Extension(name="funzione_gradiente", sources=["funzione_gradiente.pyx"], include_dirs=[numpy.get_include()])
+ext = Extension(name="gradient_functions", sources=["gradient_functions.pyx"], include_dirs=[numpy.get_include()])
 setup(ext_modules=cythonize(ext, annotate=True)) 

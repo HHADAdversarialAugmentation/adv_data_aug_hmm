@@ -5,14 +5,18 @@ Created on Fri Dec  4 00:06:38 2020
 @author: franc
 """
 import warnings
-from funzione_gradiente import super_fast_grad_x_lkl#, evaluate_data
+from gradient_functions import super_fast_grad_x_lkl#, evaluate_data
 import pandas as pd
 import numpy as np
 from hmmlearn import hmm
 from scipy import stats, linalg
 import time
 import sys
+import os
 from sklearn.metrics import confusion_matrix
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+import pickle
 warnings.filterwarnings(action='ignore')
 
 def normalize(a, axis=None):
@@ -60,712 +64,572 @@ def BIC(size, n_states, n_comp, ll):
 
 
 
-def train(path_train, path_test, path_gt, w=100, eps=0.05, it_aug=3, max_states=25, adv_method='H'): 
+def train(path_train, path_test, path_gt, output_dir, train_size, pca_components=4, w=100, eps=0.05, it_aug=3, max_states=25, adv_method='H', repetitions=1): 
 
-    w = int(w)
-    eps = float(eps)
-    it_aug = int(it_aug)
-    max_states = int(max_states)
-    t = True #re-train threshold?
-    
-    data_train = pd.read_csv(path_train).values
-    data_test = pd.read_csv(path_test).values
-    gt = pd.read_csv(path_gt).values[w-1:]
-    
-    threshs = []
-    precs_blue = []
-    recs_blue = []
-    accs_blue = []
-    f1s_blue = []
-    fprs_blue = []
-    dist_noms_blue = []
-    dist_anos_blue = []
-    #re_precs_blue = []
-    #re_recs_blue = []
-    #re_accs_blue = []
-    #re_f1s_blue = []
-    #re_fprs_blue = []
-    #re_dist_noms_blue = []
-    #re_dist_anos_blue = []
-    #precs_orange = []
-    #recs_orange = []
-    #accs_orange = []
-    #f1s_orange = []
-    #fprs_orange = []
-    #dist_noms_orange = []
-    #dist_anos_orange = []
-    #re_precs_orange = []
-    #re_recs_orange = []
-    #re_accs_orange = []
-    #re_f1s_orange = []
-    #re_fprs_orange = []
-    #re_dist_noms_orange = []
-    #re_dist_anos_orange = []
-    started = []
-    introduced = []
-    #attacks_before = []
-    #attacks_after = []
-    
-    ##############n states training##############
-    print("Choosing optimal number of states with BIC")
-    BICs = []
-    for K in range(2,max_states):
-        np.random.seed(0)
-        model = hmm.GaussianHMM(n_components=K, covariance_type="diag", n_iter=100, random_state = 0).fit(data_train)
-        ll_train, viterbi_train = model.decode(data_train)
-        BICs.append(BIC(data_train.shape[0], K, 2*data_train.shape[1], ll_train))
-    
-    K = np.argmin(BICs) + 2
-    print("N states from BIC", K)
-    print("Model training")
-    start = time.time()
-    model = hmm.GaussianHMM(n_components=K, covariance_type="diag", n_iter=100, random_state = 0)#, init_params='')
-    np.random.seed(0)
-    model.fit(data_train)
-    print("Trained in ", time.time()-start)
-    
-    
-    ##############threshold training##############
-    print("Threshold training")
-    start = time.time()
-    i = w
-    scores = []
-    while(i <= data_train.shape[0]): 
-        Wt = data_train[i-w:i].copy()
-        ll, St = model.decode(Wt)
-        st = stats.mode(St)[0]
-        X = Wt[St == st]
-        mu = np.reshape(np.mean(X, axis=0), [1, data_train.shape[1]])
-        cov = (np.diag(np.cov(X.T)) + 1e-5) * np.eye(data_train.shape[1], data_test.shape[1])
-        score = hellinger_dist(model.means_[st], model.covars_[st][0], mu, cov)
+    os.chdir(output_dir)
+    os.system(f'mkdir models_train_{train_size}')
+    with open(f"log_{train_size}_{pca_components}_{w}_{eps}_{it_aug}_{max_states}_{adv_method}_{repetitions}.txt", 'w+') as log:
+        train_size = int(train_size)
+        pca_components = int(pca_components)
+        w = int(w)
+        eps = float(eps)
+        it_aug = int(it_aug)
+        max_states = int(max_states)
+        repetitions = int(repetitions)
         
-        scores.append(score)
-        i += 1
+        log.write("#############################################\n")
+        log.write(f"TRAIN SIZE\t{train_size}\n")
+        log.write(f"PCA COMPONENTS\t{pca_components}\n")
+        log.write(f"WINDOW SIZE\t{w}\n")
+        log.write(f"EPSILON\t{eps}\n")
+        log.write(f"ITERATION OF AUGMENTATION\t{it_aug}\n")
+        log.write(f"MAX N. STATES\t{max_states}\n")
+        log.write(f"N. REPETITIONS\t{repetitions}\n")
+        log.write("#############################################\n")
+        t = True #re-train threshold?
         
-    thresh = np.max(scores) + (1/10*eps)
-    print("Threshold trained in ", time.time()-start)
-    print("STARTING THRESHOLD", thresh)
-    
-    ##############first evaluation of test set##############
-    print("First evaluation on test set")
-    start = time.time()
-    i = w
-    scores = []
-    re_scores = []
-    nominal_dist_from_thresh_blue = []
-    anomalous_dist_from_thresh_blue = []
-    nominal_dist_from_thresh_orange = []
-    anomalous_dist_from_thresh_orange = []
-    n_w = 0
-    while(i <= data_test.shape[0]): #
-        current_eps = eps/10
-        Wt = data_test[i-w:i].copy()
-        ll, St = model.decode(Wt)
-        st = stats.mode(St)[0]
-        X = Wt[St == st]
-        mu = np.reshape(np.mean(X, axis=0), [1, data_test.shape[1]])
-        cov = (np.diag(np.cov(X.T)) + 1e-5) * np.eye(data_test.shape[1], data_test.shape[1])
-        score = hellinger_dist(model.means_[st], model.covars_[st][0], mu, cov)
-        scores.append(score)
+        data_train_ = pd.read_csv(path_train).values
+        data_test_ = pd.read_csv(path_test).values
+        gt = pd.read_csv(path_gt).values[w-1:]
         
-        ##############CHANGE THIS PART BASED ON GRADIENT USED##############
-        if adv_method == "H":
-            gradients = grad_x_hellinger_dist(model.means_[st][0], model.covars_[st][0], X)
-            signs = np.sign(gradients)
+        threshs_before = []
+        threshs_after = []
+        f1s_before = []
+        f1s_after = []
+        introduced = []
+        #attacks_before = []
+        #attacks_after = []
+        for iteration in range(repetitions):
+            print("Repetition #", iteration)
+            log.write(f"Repetition #{iteration}\n")
             
-            Wt_new = Wt.copy()
-            Wt_new[St == st] = Wt_new[St == st] + current_eps*np.array(signs)
+            np.random.seed(iteration)
+            start = np.random.randint(0, data_train_.shape[0]-train_size)
+            print(f"Training set starts at {start} and ends in {start+train_size}")
+            log.write(f"Training set starts at {start} and ends in {start+train_size}\n")
             
-            prev_score = score
-            new_scores = []
-            eps_windows = []
-            while current_eps <= eps:
-                ll_new, St_new = model.decode(Wt_new)
-                st_new = stats.mode(St_new)[0]
-        
-                st_temp = st
-                Wt_temp = Wt_new.copy()
-                
-                X_new = Wt_temp[St_new == st_new]
-                new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_test.shape[1]])[0]
-                new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_test.shape[1], data_train.shape[1])
-                new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
-                
-                changed = False
-                while st_new != st_temp and new_score > prev_score:
-                    changed = True
-                    prev_score = new_score
-                    prev_window = Wt_temp.copy()
-                    
-                    st_temp = st_new
-                    
-                    other_grads = grad_x_hellinger_dist(model.means_[st_new][0], model.covars_[st_new][0], Wt[St_new == st_new])
-                    other_signs = np.sign(other_grads)
-                    window_pert = Wt_new.copy()
-                    window_pert[St_new == st_new] = window_pert[St_new == st_new] + current_eps*np.array(other_signs)
-                    sphere = data_test[i-w:i].copy()
-                    sphere[St_new == st_new] = sphere[St_new == st_new] + current_eps*np.array(other_signs)
-                    idx_pos = np.where(sphere > 0)
-                    idx_neg = np.where(sphere < 0)
-                    Wt_temp[idx_pos] = np.minimum(window_pert[idx_pos], sphere[idx_pos])
-                    Wt_temp[idx_neg] = np.maximum(window_pert[idx_neg], sphere[idx_neg])
-        
-                    ll_new, St_new = model.decode(Wt_temp)
-                    st_new = stats.mode(St_new)[0]
-                    
-                    X_new = Wt_temp[St_new == st_new]
-                    new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_test.shape[1]])[0]
-                    new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_test.shape[1], data_test.shape[1])
-                    new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
-                
-                
-                if changed and prev_score > new_score:
-                    new_score = prev_score
-                    Wt_temp = prev_window
-                    
-                eps_windows.append(Wt_temp)
-                
-                Wt_new[St == st] = Wt[St == st] + current_eps*np.array(signs)
-                current_eps += eps/10
-                new_scores.append(new_score)
+            data_train = data_train_[start:start+train_size]
             
-            final_score = np.max(new_scores)
-            if final_score < score:
-                re_scores.append(score)
-                re_score = score
+            if pca_components > 0:
+                sc = StandardScaler()
+                pca = PCA(n_components = pca_components)
+                
+                np.random.seed(0)
+                data_train = sc.fit_transform(data_train)
+                np.random.seed(0)
+                data_train = pca.fit_transform(data_train)
+                
+                data_test = sc.transform(data_test_)
+                data_test = pca.transform(data_test_)
+            
             else:
-                idx_final_score = np.argmax(new_scores)+1
-                re_scores.append(final_score)
-                re_score = final_score
-        else:
-            ll = model._compute_log_likelihood(Wt)
-            gradients = super_fast_grad_x_lkl(Wt, K, model.means_, model.covars_, model.startprob_, model.transmat_, ll) #super_fast_grad_x_lkl(Wt, K, model) #S, 
-            signs = np.sign(gradients)
-                        
-            Wt_new = Wt.copy()
-            Wt_new = Wt_new + eps*np.array(signs)
+                
+                data_test = data_test_
+                
+            ##############n states training##############
+            print("Choosing optimal number of states with BIC")
+            log.write("Choosing optimal number of states with BIC\n")
+            BICs = []
+            for K in range(2,max_states):
+                np.random.seed(0)
+                model = hmm.GaussianHMM(n_components=K, covariance_type="diag", n_iter=100, random_state = 0).fit(data_train)
+                ll_train, viterbi_train = model.decode(data_train)
+                BICs.append(BIC(data_train.shape[0], K, 2*data_train.shape[1], ll_train))
             
-            ll_new, St_new = model.decode(Wt_new)
-            st_new = stats.mode(St_new)[0]
-            X_new = Wt_new[St_new == st_new]
-            new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_train.shape[1]])[0]
-            new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_train.shape[1], data_train.shape[1])
-            new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
-            re_scores.append(new_score)
-        ###################################################################
-        
-        #if gt[n_w] == 0:
-        #    nominal_dist_from_thresh_blue.append(thresh-score)
-        #    nominal_dist_from_thresh_orange.append(thresh-re_score)
-        #else:
-        #    anomalous_dist_from_thresh_blue.append(score-thresh)
-        #    anomalous_dist_from_thresh_orange.append(re_score-thresh)
-        i += 1
-        #n_w += 1
-    
-    #mean_nominal_dist_blue = np.mean(nominal_dist_from_thresh_blue)
-    #mean_anomalous_dist_blue = np.mean(anomalous_dist_from_thresh_blue)
-    #mean_nominal_dist_orange = np.mean(nominal_dist_from_thresh_orange)
-    #mean_anomalous_dist_orange = np.mean(anomalous_dist_from_thresh_orange)
-    answers_blue = np.array(scores) > thresh #first array used after to calculate performances
-    #answers_orange = np.array(re_scores) > thresh
-    
-    successful_attacks_test_before = np.bitwise_and(np.array(re_scores)[np.where(gt == 0)[0]] >= thresh, np.array(scores)[np.where(gt == 0)[0]] < thresh)
-    print("Successful attacks on test before", sum(successful_attacks_test_before))
-
-    
-    ##############adversarial example generation for data augmentation##############
-    print("Starting augmentation procedure")
-    adv_positions = [1, 1]
-    data_augmented = np.concatenate([data_train])
-    lengths = [len(data_train)]
-    it = 0
-    windows_introduced = 0
-    start_time = time.time()
-    while sum(adv_positions) > 0 and it < it_aug:
-        i = w
-        scores = []
-        final_signs = []
-        adv_scores = []
-        windows_2 = [] #this variable must be filled with adversarial windows which will be concatenated to data_augmented
-    
-        while(i <= data_train.shape[0]): #
-            current_eps = eps/10
-            Wt = data_train[i-w:i].copy()
-            ll, St = model.decode(Wt)
-            st = stats.mode(St)[0]
-            X = Wt[St == st]
-            mu = np.reshape(np.mean(X, axis=0), [1, data_train.shape[1]])
-            cov = (np.diag(np.cov(X.T)) + 1e-5) * np.eye(data_train.shape[1], data_train.shape[1])
-            score = hellinger_dist(model.means_[st], model.covars_[st][0], mu, cov)
-            scores.append(score)
-            ##############CHANGE THIS PART BASED ON GRADIENT USED##############
-            if adv_method == 'H':
-                gradients = grad_x_hellinger_dist(model.means_[st][0], model.covars_[st][0], X)
-                signs = np.sign(gradients)
+            K = np.argmin(BICs) + 2
+            print("N states from BIC", K)
+            log.write(f"N states from BIC {K}\n")
+            print("Model training")
+            log.write("Model training\n")
+            start = time.time()
+            model = hmm.GaussianHMM(n_components=K, covariance_type="diag", n_iter=100, random_state = 0)#, init_params='')
+            np.random.seed(0)
+            model.fit(data_train)
+            print("Trained in ", time.time()-start)
+            log.write(f"Trained in {time.time()-start}\n")
+            with open(f"models_train_{train_size}/model_{iteration}_HHAD.pkl", "wb") as file: pickle.dump(model, file)
+            
+            ##############threshold training##############
+            print("Threshold training")
+            log.write("Threshold training\n")
+            start = time.time()
+            i = w
+            scores = []
+            while(i <= data_train.shape[0]): 
+                Wt = data_train[i-w:i].copy()
+                ll, St = model.decode(Wt)
+                st = stats.mode(St)[0]
+                X = Wt[St == st]
+                mu = np.reshape(np.mean(X, axis=0), [1, data_train.shape[1]])
+                cov = (np.diag(np.cov(X.T)) + 1e-5) * np.eye(data_train.shape[1], data_test.shape[1])
+                score = hellinger_dist(model.means_[st], model.covars_[st][0], mu, cov)
                 
-                final_signs.append(signs)
+                scores.append(score)
+                i += 1
+                
+            thresh = np.max(scores) + (1/10*eps)
+            print("Threshold trained in ", time.time()-start)
+            log.write(f"Threshold trained in {time.time()-start}\n")
+            print("STARTING THRESHOLD", thresh)
+            log.write(f"STARTING THRESHOLD {thresh}\n")
+            threshs_before.append(thresh)
+            
+            ##############first evaluation of test set##############
+            print("First evaluation on test set")
+            log.write("First evaluation on test set\n")
+            start = time.time()
+            i = w
+            scores = []
+            re_scores = []
+            while(i <= data_test.shape[0]): #
+                current_eps = eps/10
+                Wt = data_test[i-w:i].copy()
+                ll, St = model.decode(Wt)
+                st = stats.mode(St)[0]
+                X = Wt[St == st]
+                mu = np.reshape(np.mean(X, axis=0), [1, data_test.shape[1]])
+                cov = (np.diag(np.cov(X.T)) + 1e-5) * np.eye(data_test.shape[1], data_test.shape[1])
+                score = hellinger_dist(model.means_[st], model.covars_[st][0], mu, cov)
+                scores.append(score)
+                
+                ##############CHANGE THIS PART BASED ON GRADIENT USED##############
+                if adv_method == "H":
+                    gradients = grad_x_hellinger_dist(model.means_[st][0], model.covars_[st][0], X)
+                    signs = np.sign(gradients)
+                    
+                    Wt_new = Wt.copy()
+                    Wt_new[St == st] = Wt_new[St == st] + current_eps*np.array(signs)
+                    
+                    prev_score = score
+                    new_scores = []
+                    eps_windows = []
+                    while current_eps <= eps:
+                        ll_new, St_new = model.decode(Wt_new)
+                        st_new = stats.mode(St_new)[0]
+                
+                        st_temp = st
+                        Wt_temp = Wt_new.copy()
+                        
+                        X_new = Wt_temp[St_new == st_new]
+                        new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_test.shape[1]])[0]
+                        new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_test.shape[1], data_train.shape[1])
+                        new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
+                        
+                        changed = False
+                        while st_new != st_temp and new_score > prev_score:
+                            changed = True
+                            prev_score = new_score
+                            prev_window = Wt_temp.copy()
+                            
+                            st_temp = st_new
+                            
+                            other_grads = grad_x_hellinger_dist(model.means_[st_new][0], model.covars_[st_new][0], Wt[St_new == st_new])
+                            other_signs = np.sign(other_grads)
+                            window_pert = Wt_new.copy()
+                            window_pert[St_new == st_new] = window_pert[St_new == st_new] + current_eps*np.array(other_signs)
+                            sphere = data_test[i-w:i].copy()
+                            sphere[St_new == st_new] = sphere[St_new == st_new] + current_eps*np.array(other_signs)
+                            idx_pos = np.where(sphere > 0)
+                            idx_neg = np.where(sphere < 0)
+                            Wt_temp[idx_pos] = np.minimum(window_pert[idx_pos], sphere[idx_pos])
+                            Wt_temp[idx_neg] = np.maximum(window_pert[idx_neg], sphere[idx_neg])
+                
+                            ll_new, St_new = model.decode(Wt_temp)
+                            st_new = stats.mode(St_new)[0]
+                            
+                            X_new = Wt_temp[St_new == st_new]
+                            new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_test.shape[1]])[0]
+                            new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_test.shape[1], data_test.shape[1])
+                            new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
+                        
+                        
+                        if changed and prev_score > new_score:
+                            new_score = prev_score
+                            Wt_temp = prev_window
+                            
+                        eps_windows.append(Wt_temp)
+                        
+                        Wt_new[St == st] = Wt[St == st] + current_eps*np.array(signs)
+                        current_eps += eps/10
+                        new_scores.append(new_score)
+                    
+                    final_score = np.max(new_scores)
+                    if final_score < score:
+                        re_scores.append(score)
+                    else:
+                        idx_final_score = np.argmax(new_scores)+1
+                        re_scores.append(final_score)
+                elif adv_method == 'L':
+                    ll = model._compute_log_likelihood(Wt)
+                    gradients = super_fast_grad_x_lkl(Wt, K, model.means_, model.covars_, model.startprob_, model.transmat_, ll) #super_fast_grad_x_lkl(Wt, K, model) #S, 
+                    signs = np.sign(gradients)
                                 
-                Wt_new = Wt.copy()
-                Wt_new[St == st] = Wt_new[St == st] + current_eps*np.array(signs)
-                
-                prev_score = score
-                new_scores = []
-                eps_windows = []
-                while current_eps <= eps:
+                    Wt_new = Wt.copy()
+                    Wt_new = Wt_new + eps*np.array(signs)
+                    
                     ll_new, St_new = model.decode(Wt_new)
                     st_new = stats.mode(St_new)[0]
-            
-                    st_temp = st
-                    Wt_temp = Wt_new.copy()
-                    
-                    X_new = Wt_temp[St_new == st_new]
+                    X_new = Wt_new[St_new == st_new]
                     new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_train.shape[1]])[0]
                     new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_train.shape[1], data_train.shape[1])
                     new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
-                    
-                    changed = False
-                    while st_new != st_temp and new_score > prev_score:
-                        changed = True
-                        prev_score = new_score
-                        prev_window = Wt_temp.copy()
-                        
-                        st_temp = st_new
-                        other_grads = grad_x_hellinger_dist(model.means_[st_new][0], model.covars_[st_new][0], Wt[St_new == st_new])
-                        other_signs = np.sign(other_grads)
-                        window_pert = Wt_new.copy()
-                        window_pert[St_new == st_new] = window_pert[St_new == st_new] + current_eps*np.array(other_signs)
-                        sphere = data_train[i-w:i].copy()
-                        sphere[St_new == st_new] = sphere[St_new == st_new] + current_eps*np.array(other_signs)
-                        idx_pos = np.where(sphere > 0)
-                        idx_neg = np.where(sphere < 0)
-                        Wt_temp[idx_pos] = np.minimum(window_pert[idx_pos], sphere[idx_pos])
-                        Wt_temp[idx_neg] = np.maximum(window_pert[idx_neg], sphere[idx_neg])
-            
-                        ll_new, St_new = model.decode(Wt_temp)
-                        st_new = stats.mode(St_new)[0]
-                        
-                        X_new = Wt_temp[St_new == st_new]
-                        new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_train.shape[1]])[0]
-                        new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_train.shape[1], data_train.shape[1])
-                        new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
-                    
-                    
-                    if changed and prev_score > new_score:
-                        new_score = prev_score
-                        Wt_temp = prev_window
-                        
-                    eps_windows.append(Wt_temp)
-                    
-                    Wt_new[St == st] = Wt[St == st] + current_eps*np.array(signs)
-                    current_eps += eps/10
-                    new_scores.append(new_score)
-                
-                final_score = np.max(new_scores)
-                if final_score < score:
-                    adv_scores.append(score)
-                    windows_2.append(Wt)
+                    re_scores.append(new_score)
                 else:
-                    idx_final_score = np.argmax(new_scores)+1
-                    adv_scores.append(final_score)
-                    windows_2.append(eps_windows[idx_final_score-1])
-            else:
-                ll = model._compute_log_likelihood(Wt)
-                gradients = super_fast_grad_x_lkl(Wt, K, model.means_, model.covars_, model.startprob_, model.transmat_, ll) #super_fast_grad_x_lkl(Wt, K, model) #S, 
-                signs = np.sign(gradients)
-                            
-                Wt_new = Wt.copy()
-                Wt_new = Wt_new + eps*np.array(signs)
+                    print("Adversarial method in input is not recognized")
+                    sys.exit()
+                ###################################################################
                 
-                ll_new, St_new = model.decode(Wt_new)
-                st_new = stats.mode(St_new)[0]
-                X_new = Wt_new[St_new == st_new]
-                new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_train.shape[1]])[0]
-                new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_train.shape[1], data_train.shape[1])
-                new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
-                adv_scores.append(new_score)  
-                windows_2.append(Wt_new)
-            ###################################################################
+                i += 1
             
+            answers_blue = np.array(scores) > thresh #first array used after to calculate performances
             
-            i += 1
+            successful_attacks_test_before = np.bitwise_and(np.array(re_scores)[np.where(gt == 0)[0]] >= thresh, np.array(scores)[np.where(gt == 0)[0]] < thresh)
+            print("Successful attacks on test before", sum(successful_attacks_test_before))
+            log.write(f"Successful attacks on test before {sum(successful_attacks_test_before)}\n")
             
-        
-        adv_positions = np.bitwise_and(np.array(adv_scores) >= thresh, np.array(scores) < thresh)
-        print("Number of false positives generated", sum(adv_positions))
-        
-        
-        windows_introduced += sum(adv_positions)
-        if sum(adv_positions) > 0:
-            for pos in np.where(adv_positions)[0]:
-                lengths.append(w)
-                data_augmented = np.concatenate([data_augmented, windows_2[pos]])
-            
-            np.random.seed(0)
-            model.fit(data_augmented, lengths)
-        
-            if t:
-                ###############threshold re-training###############
-                
+            ##############adversarial example generation for data augmentation##############
+            print("Starting augmentation procedure")
+            log.write("Starting augmentation procedure\n")
+            adv_positions = [1, 1]
+            data_augmented = np.concatenate([data_train])
+            lengths = [len(data_train)]
+            it = 0
+            windows_introduced = 0
+            start_time = time.time()
+            while sum(adv_positions) > 0 and it < it_aug:
                 i = w
                 scores = []
-                while(i <= data_train.shape[0]): 
+                final_signs = []
+                adv_scores = []
+                windows_2 = [] #this variable must be filled with adversarial windows which will be concatenated to data_augmented
+            
+                while(i <= data_train.shape[0]): #
+                    current_eps = eps/10
                     Wt = data_train[i-w:i].copy()
                     ll, St = model.decode(Wt)
                     st = stats.mode(St)[0]
                     X = Wt[St == st]
-                    mu = np.reshape(np.mean(X, axis=0), [1, data_test.shape[1]])
-                    cov = (np.diag(np.cov(X.T)) + 1e-5) * np.eye(data_test.shape[1], data_test.shape[1])
+                    mu = np.reshape(np.mean(X, axis=0), [1, data_train.shape[1]])
+                    cov = (np.diag(np.cov(X.T)) + 1e-5) * np.eye(data_train.shape[1], data_train.shape[1])
                     score = hellinger_dist(model.means_[st], model.covars_[st][0], mu, cov)
-                    
                     scores.append(score)
+                    ##############CHANGE THIS PART BASED ON GRADIENT USED##############
+                    if adv_method == 'H':
+                        gradients = grad_x_hellinger_dist(model.means_[st][0], model.covars_[st][0], X)
+                        signs = np.sign(gradients)
+                        
+                        final_signs.append(signs)
+                                        
+                        Wt_new = Wt.copy()
+                        Wt_new[St == st] = Wt_new[St == st] + current_eps*np.array(signs)
+                        
+                        prev_score = score
+                        new_scores = []
+                        eps_windows = []
+                        while current_eps <= eps:
+                            ll_new, St_new = model.decode(Wt_new)
+                            st_new = stats.mode(St_new)[0]
+                    
+                            st_temp = st
+                            Wt_temp = Wt_new.copy()
+                            
+                            X_new = Wt_temp[St_new == st_new]
+                            new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_train.shape[1]])[0]
+                            new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_train.shape[1], data_train.shape[1])
+                            new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
+                            
+                            changed = False
+                            while st_new != st_temp and new_score > prev_score:
+                                changed = True
+                                prev_score = new_score
+                                prev_window = Wt_temp.copy()
+                                
+                                st_temp = st_new
+                                other_grads = grad_x_hellinger_dist(model.means_[st_new][0], model.covars_[st_new][0], Wt[St_new == st_new])
+                                other_signs = np.sign(other_grads)
+                                window_pert = Wt_new.copy()
+                                window_pert[St_new == st_new] = window_pert[St_new == st_new] + current_eps*np.array(other_signs)
+                                sphere = data_train[i-w:i].copy()
+                                sphere[St_new == st_new] = sphere[St_new == st_new] + current_eps*np.array(other_signs)
+                                idx_pos = np.where(sphere > 0)
+                                idx_neg = np.where(sphere < 0)
+                                Wt_temp[idx_pos] = np.minimum(window_pert[idx_pos], sphere[idx_pos])
+                                Wt_temp[idx_neg] = np.maximum(window_pert[idx_neg], sphere[idx_neg])
+                    
+                                ll_new, St_new = model.decode(Wt_temp)
+                                st_new = stats.mode(St_new)[0]
+                                
+                                X_new = Wt_temp[St_new == st_new]
+                                new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_train.shape[1]])[0]
+                                new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_train.shape[1], data_train.shape[1])
+                                new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
+                            
+                            
+                            if changed and prev_score > new_score:
+                                new_score = prev_score
+                                Wt_temp = prev_window
+                                
+                            eps_windows.append(Wt_temp)
+                            
+                            Wt_new[St == st] = Wt[St == st] + current_eps*np.array(signs)
+                            current_eps += eps/10
+                            new_scores.append(new_score)
+                        
+                        final_score = np.max(new_scores)
+                        if final_score < score:
+                            adv_scores.append(score)
+                            windows_2.append(Wt)
+                        else:
+                            idx_final_score = np.argmax(new_scores)+1
+                            adv_scores.append(final_score)
+                            windows_2.append(eps_windows[idx_final_score-1])
+                    elif adv_method == 'L':
+                        ll = model._compute_log_likelihood(Wt)
+                        gradients = super_fast_grad_x_lkl(Wt, K, model.means_, model.covars_, model.startprob_, model.transmat_, ll) #super_fast_grad_x_lkl(Wt, K, model) #S, 
+                        signs = np.sign(gradients)
+                                    
+                        Wt_new = Wt.copy()
+                        Wt_new = Wt_new + eps*np.array(signs)
+                        
+                        ll_new, St_new = model.decode(Wt_new)
+                        st_new = stats.mode(St_new)[0]
+                        X_new = Wt_new[St_new == st_new]
+                        new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_train.shape[1]])[0]
+                        new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_train.shape[1], data_train.shape[1])
+                        new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
+                        adv_scores.append(new_score)  
+                        windows_2.append(Wt_new)
+                    else:
+                        print("Adversarial method in input is not recognized")
+                        sys.exit()
+                    ###################################################################
+                    
+                    
                     i += 1
                     
-                #thresh = np.max(scores) + (1/10*eps)
-                if np.max(scores) + (1/10*eps) > thresh:
-                    thresh = np.max(scores) + (1/10*eps)
                 
-           
-        it += 1
-     
-    introduced.append(windows_introduced)
-    started.append(it)
-    threshs.append(thresh)
-    print("Finished in", time.time() - start_time)
-    print("THRESHOLD AFTER AUGMENTATION", thresh)
-    
-    ##############re-evaluation on test set with augmented model##############
-    print("Re-evaluation of test set with augmented model")
-    re_nominal_dist_from_thresh_blue = []
-    re_anomalous_dist_from_thresh_blue = []
-    re_nominal_dist_from_thresh_orange = []
-    re_anomalous_dist_from_thresh_orange = []
-    i = w
-    scores = [] #scores must contain the collection of normal scores
-    re_scores = [] #re_scores must contain the collection of adversarial scores
-    n_w = 0
-    while(i <= data_test.shape[0]): #
-        current_eps = eps/10
-        Wt = data_test[i-w:i].copy()
-        ll, St = model.decode(Wt)
-        st = stats.mode(St)[0]
-        X = Wt[St == st]
-        mu = np.reshape(np.mean(X, axis=0), [1, data_test.shape[1]])
-        cov = (np.diag(np.cov(X.T)) + 1e-5) * np.eye(data_test.shape[1], data_test.shape[1])
-        score = hellinger_dist(model.means_[st], model.covars_[st][0], mu, cov)
-        scores.append(score)
-        
-        ##############CHANGE THIS PART BASED ON GRADIENT USED##############
-        if adv_method == 'H':
-            gradients = grad_x_hellinger_dist(model.means_[st][0], model.covars_[st][0], X)
-            signs = np.sign(gradients)
-            
-            Wt_new = Wt.copy()
-            Wt_new[St == st] = Wt_new[St == st] + current_eps*np.array(signs)
-            
-            prev_score = score
-            new_scores = []
-            eps_windows = []
-            while current_eps <= eps:
-                ll_new, St_new = model.decode(Wt_new)
-                st_new = stats.mode(St_new)[0]
-        
-                st_temp = st
-                Wt_temp = Wt_new.copy()
+                adv_positions = np.bitwise_and(np.array(adv_scores) >= thresh, np.array(scores) < thresh)
+                print("Number of false positives generated", sum(adv_positions))
+                log.write(f"Number of false positives generated {sum(adv_positions)}\n")
                 
-                X_new = Wt_temp[St_new == st_new]
-                new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_test.shape[1]])[0]
-                new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_test.shape[1], data_train.shape[1])
-                new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
-                
-                changed = False
-                while st_new != st_temp and new_score > prev_score:
-                    changed = True
-                    prev_score = new_score
-                    prev_window = Wt_temp.copy()
+                windows_introduced += sum(adv_positions)
+                if sum(adv_positions) > 0:
+                    for pos in np.where(adv_positions)[0]:
+                        lengths.append(w)
+                        data_augmented = np.concatenate([data_augmented, windows_2[pos]])
                     
-                    st_temp = st_new
-                    #print(i, current_eps)
-                    other_grads = grad_x_hellinger_dist(model.means_[st_new][0], model.covars_[st_new][0], Wt[St_new == st_new])
-                    other_signs = np.sign(other_grads)
-                    window_pert = Wt_new.copy()
-                    window_pert[St_new == st_new] = window_pert[St_new == st_new] + current_eps*np.array(other_signs)
-                    sphere = data_test[i-w:i].copy()
-                    sphere[St_new == st_new] = sphere[St_new == st_new] + current_eps*np.array(other_signs)
-                    idx_pos = np.where(sphere > 0)
-                    idx_neg = np.where(sphere < 0)
-                    Wt_temp[idx_pos] = np.minimum(window_pert[idx_pos], sphere[idx_pos])
-                    Wt_temp[idx_neg] = np.maximum(window_pert[idx_neg], sphere[idx_neg])
-        
-                    ll_new, St_new = model.decode(Wt_temp)
-                    st_new = stats.mode(St_new)[0]
-                    
-                    X_new = Wt_temp[St_new == st_new]
-                    new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_test.shape[1]])[0]
-                    new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_test.shape[1], data_test.shape[1])
-                    new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
+                    np.random.seed(0)
+                    model.fit(data_augmented, lengths)
                 
-                
-                if changed and prev_score > new_score:
-                    new_score = prev_score
-                    Wt_temp = prev_window
-                    
-                eps_windows.append(Wt_temp)
-                
-                Wt_new[St == st] = Wt[St == st] + current_eps*np.array(signs)
-                current_eps += eps/10
-                new_scores.append(new_score)
-            
-            final_score = np.max(new_scores)
-            if final_score < score:
-                re_scores.append(score)
-                re_score = score
-            else:
-                idx_final_score = np.argmax(new_scores)+1
-                re_scores.append(final_score)
-                re_score = final_score
-        else:
-            ll = model._compute_log_likelihood(Wt)
-            gradients = super_fast_grad_x_lkl(Wt, K, model.means_, model.covars_, model.startprob_, model.transmat_, ll) #super_fast_grad_x_lkl(Wt, K, model) #S, 
-            signs = np.sign(gradients)
+                    if t:
+                        ###############threshold re-training###############
                         
-            Wt_new = Wt.copy()
-            Wt_new = Wt_new + eps*np.array(signs)
+                        i = w
+                        scores = []
+                        while(i <= data_train.shape[0]): 
+                            Wt = data_train[i-w:i].copy()
+                            ll, St = model.decode(Wt)
+                            st = stats.mode(St)[0]
+                            X = Wt[St == st]
+                            mu = np.reshape(np.mean(X, axis=0), [1, data_test.shape[1]])
+                            cov = (np.diag(np.cov(X.T)) + 1e-5) * np.eye(data_test.shape[1], data_test.shape[1])
+                            score = hellinger_dist(model.means_[st], model.covars_[st][0], mu, cov)
+                            
+                            scores.append(score)
+                            i += 1
+                            
+                        #thresh = np.max(scores) + (1/10*eps)
+                        if np.max(scores) + (1/10*eps) > thresh:
+                            thresh = np.max(scores) + (1/10*eps)
+                        
+                   
+                it += 1
+             
+            introduced.append(windows_introduced)
+            threshs_after.append(thresh)
+            print("Finished in", time.time() - start_time)
+            log.write(f"Finished in {time.time() - start_time}\n")
+            print("THRESHOLD AFTER AUGMENTATION", thresh)
+            log.write("THRESHOLD AFTER AUGMENTATION {thresh}\n")
+            with open(f"models_train_{train_size}/model_{iteration}_{adv_method}-AUG.pkl", "wb") as file: pickle.dump(model, file)
             
-            ll_new, St_new = model.decode(Wt_new)
-            st_new = stats.mode(St_new)[0]
-            X_new = Wt_new[St_new == st_new]
-            new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_train.shape[1]])[0]
-            new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_train.shape[1], data_train.shape[1])
-            new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
-            re_scores.append(new_score)
-        ###################################################################                
+            ##############re-evaluation on test set with augmented model##############
+            print("Re-evaluation of test set with augmented model")
+            log.write("Re-evaluation of test set with augmented model\n")
+            i = w
+            scores = [] #scores must contain the collection of normal scores
+            re_scores = [] #re_scores must contain the collection of adversarial scores
+            while(i <= data_test.shape[0]): #
+                current_eps = eps/10
+                Wt = data_test[i-w:i].copy()
+                ll, St = model.decode(Wt)
+                st = stats.mode(St)[0]
+                X = Wt[St == st]
+                mu = np.reshape(np.mean(X, axis=0), [1, data_test.shape[1]])
+                cov = (np.diag(np.cov(X.T)) + 1e-5) * np.eye(data_test.shape[1], data_test.shape[1])
+                score = hellinger_dist(model.means_[st], model.covars_[st][0], mu, cov)
+                scores.append(score)
+                
+                ##############CHANGE THIS PART BASED ON GRADIENT USED##############
+                if adv_method == 'H':
+                    gradients = grad_x_hellinger_dist(model.means_[st][0], model.covars_[st][0], X)
+                    signs = np.sign(gradients)
+                    
+                    Wt_new = Wt.copy()
+                    Wt_new[St == st] = Wt_new[St == st] + current_eps*np.array(signs)
+                    
+                    prev_score = score
+                    new_scores = []
+                    eps_windows = []
+                    while current_eps <= eps:
+                        ll_new, St_new = model.decode(Wt_new)
+                        st_new = stats.mode(St_new)[0]
+                
+                        st_temp = st
+                        Wt_temp = Wt_new.copy()
+                        
+                        X_new = Wt_temp[St_new == st_new]
+                        new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_test.shape[1]])[0]
+                        new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_test.shape[1], data_train.shape[1])
+                        new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
+                        
+                        changed = False
+                        while st_new != st_temp and new_score > prev_score:
+                            changed = True
+                            prev_score = new_score
+                            prev_window = Wt_temp.copy()
+                            
+                            st_temp = st_new
+                            #print(i, current_eps)
+                            other_grads = grad_x_hellinger_dist(model.means_[st_new][0], model.covars_[st_new][0], Wt[St_new == st_new])
+                            other_signs = np.sign(other_grads)
+                            window_pert = Wt_new.copy()
+                            window_pert[St_new == st_new] = window_pert[St_new == st_new] + current_eps*np.array(other_signs)
+                            sphere = data_test[i-w:i].copy()
+                            sphere[St_new == st_new] = sphere[St_new == st_new] + current_eps*np.array(other_signs)
+                            idx_pos = np.where(sphere > 0)
+                            idx_neg = np.where(sphere < 0)
+                            Wt_temp[idx_pos] = np.minimum(window_pert[idx_pos], sphere[idx_pos])
+                            Wt_temp[idx_neg] = np.maximum(window_pert[idx_neg], sphere[idx_neg])
+                
+                            ll_new, St_new = model.decode(Wt_temp)
+                            st_new = stats.mode(St_new)[0]
+                            
+                            X_new = Wt_temp[St_new == st_new]
+                            new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_test.shape[1]])[0]
+                            new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_test.shape[1], data_test.shape[1])
+                            new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
+                        
+                        
+                        if changed and prev_score > new_score:
+                            new_score = prev_score
+                            Wt_temp = prev_window
+                            
+                        eps_windows.append(Wt_temp)
+                        
+                        Wt_new[St == st] = Wt[St == st] + current_eps*np.array(signs)
+                        current_eps += eps/10
+                        new_scores.append(new_score)
+                    
+                    final_score = np.max(new_scores)
+                    if final_score < score:
+                        re_scores.append(score)
+                    else:
+                        idx_final_score = np.argmax(new_scores)+1
+                        re_scores.append(final_score)
+                elif adv_method == 'L':
+                    ll = model._compute_log_likelihood(Wt)
+                    gradients = super_fast_grad_x_lkl(Wt, K, model.means_, model.covars_, model.startprob_, model.transmat_, ll) #super_fast_grad_x_lkl(Wt, K, model) #S, 
+                    signs = np.sign(gradients)
+                                
+                    Wt_new = Wt.copy()
+                    Wt_new = Wt_new + eps*np.array(signs)
+                    
+                    ll_new, St_new = model.decode(Wt_new)
+                    st_new = stats.mode(St_new)[0]
+                    X_new = Wt_new[St_new == st_new]
+                    new_mu = np.reshape(np.mean(X_new, axis=0), [1, data_train.shape[1]])[0]
+                    new_cov = (np.diag(np.cov(X_new.T)) + 1e-5) * np.eye(data_train.shape[1], data_train.shape[1])
+                    new_score = hellinger_dist(model.means_[st_new], model.covars_[st_new][0], new_mu, new_cov)
+                    re_scores.append(new_score)
+                else:
+                    print("Adversarial method in input is not recognized")
+                    sys.exit()
+                ###################################################################                
+                
+                i += 1
+            
+            re_answers_blue = np.array(scores) > thresh
+            
+            successful_attacks_test_after = np.bitwise_and(np.array(re_scores)[np.where(gt == 0)[0]] >= thresh, np.array(scores)[np.where(gt == 0)[0]] < thresh)
+            print("Successful attacks after", sum(successful_attacks_test_after))
+            log.write(f"Successful attacks after {sum(successful_attacks_test_after)}\n")
+            
+            ##############compute performances##############
+            
+            conf = confusion_matrix(gt, answers_blue)
+            
+            TP = conf[0,0]
+            TN = conf[1,1]
+            FP = conf[0,1]
+            FN = conf[1,0]
+            
+            F1_blue = 2*TP / (2*TP + FP + FN)
+            print("F1 before", F1_blue)
+            log.write(f"F1 before {F1_blue}\n")
+            f1s_before.append(F1_blue)
+            
+            conf = confusion_matrix(gt, re_answers_blue)
+            
+            TP = conf[0,0]
+            TN = conf[1,1]
+            FP = conf[0,1]
+            FN = conf[1,0]
+            
+            F1_blue = 2*TP / (2*TP + FP + FN)
+            print("F1 after", F1_blue)
+            log.write(f"F1 after {F1_blue}\n")
+            f1s_after.append(F1_blue)
+            
+            log.write("\n")
         
-        #if gt[n_w] == 0:
-        #    re_nominal_dist_from_thresh_blue.append(thresh-score)
-        #    re_nominal_dist_from_thresh_orange.append(thresh-re_score)
-        #else:
-        #    re_anomalous_dist_from_thresh_blue.append(score-thresh)
-        #    re_anomalous_dist_from_thresh_orange.append(re_score-thresh)
-        i += 1
-        #n_w += 1
+    f1_df = pd.DataFrame()
+    f1_df['F1 before'] = f1s_before
+    f1_df['F1 after'] = f1s_after
+    f1_df.to_csv(f"f1_scores_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
     
-    #re_mean_nominal_dist_blue = np.mean(re_nominal_dist_from_thresh_blue)
-    #print("Mean nominal distance before", mean_nominal_dist_blue, "\nMean nominal distance after", re_mean_nominal_dist_blue)    
-    #re_mean_anomalous_dist_blue = np.mean(re_anomalous_dist_from_thresh_blue)
-    #print("Mean anomalous distance before", mean_anomalous_dist_blue, "\nMean anomalous distance after", re_mean_anomalous_dist_blue)   
-    #re_mean_nominal_dist_orange = np.mean(re_nominal_dist_from_thresh_orange)
-    #print("Mean nominal distance before", mean_nominal_dist_orange, "\nMean nominal distance after", re_mean_nominal_dist_orange)    
-    #re_mean_anomalous_dist_orange = np.mean(re_anomalous_dist_from_thresh_orange)
-    #print("Mean anomalous distance before", mean_anomalous_dist_orange, "\nMean anomalous distance after", re_mean_anomalous_dist_orange)   
-    re_answers_blue = np.array(scores) > thresh
-    #re_answers_orange = np.array(re_scores) > thresh
-    
-    successful_attacks_test_after = np.bitwise_and(np.array(re_scores)[np.where(gt == 0)[0]] >= thresh, np.array(scores)[np.where(gt == 0)[0]] < thresh)
-    print("Successful attacks after", sum(successful_attacks_test_after))
-    
-    ##############compute performances##############
-    
-    conf = confusion_matrix(gt, answers_blue)
-    
-    TP = conf[0,0]
-    TN = conf[1,1]
-    FP = conf[0,1]
-    FN = conf[1,0]
-    
-    precision_blue = TP / (TP + FP)
-    recall_blue = TP / (TP + FN)
-    accuracy_blue = (TP + TN) / (TP + TN + FP + FN)
-    F1_blue = 2*TP / (2*TP + FP + FN)
-    FPR_blue = FP / (FP + TN)
-    print("F1 before", F1_blue)
-    
-    #precs_blue.append(precision_blue)
-    #recs_blue.append(recall_blue)
-    #accs_blue.append(accuracy_blue)
-    #f1s_blue.append(F1_blue)
-    #fprs_blue.append(FPR_blue)
-    #dist_noms_blue.append(mean_nominal_dist_blue)
-    #dist_anos_blue.append(mean_anomalous_dist_blue)
-    
-    
-    conf = confusion_matrix(gt, re_answers_blue)
-    
-    TP = conf[0,0]
-    TN = conf[1,1]
-    FP = conf[0,1]
-    FN = conf[1,0]
-    
-    precision_blue = TP / (TP + FP)
-    recall_blue = TP / (TP + FN)
-    accuracy_blue = (TP + TN) / (TP + TN + FP + FN)
-    F1_blue = 2*TP / (2*TP + FP + FN)
-    FPR_blue = FP / (FP + TN)
-    print("F1 after", F1_blue)
-    
-    #re_precs_blue.append(precision_blue)
-    #re_recs_blue.append(recall_blue)
-    #re_accs_blue.append(accuracy_blue)
-    #re_f1s_blue.append(F1_blue)
-    #re_fprs_blue.append(FPR_blue)
-    #re_dist_noms_blue.append(re_mean_nominal_dist_blue)
-    #re_dist_anos_blue.append(re_mean_anomalous_dist_blue)
-    
-    #attacks_before.append(sum(successful_attacks_test_before))
-    #attacks_after.append(sum(successful_attacks_test_after))
-    
-    '''
-    conf = confusion_matrix(gt, answers_orange)
-    print("Before\n", conf)
-    
-    TP = conf[0,0]
-    TN = conf[1,1]
-    FP = conf[0,1]
-    FN = conf[1,0]
-    
-    precision_orange = TP / (TP + FP)
-    recall_orange = TP / (TP + FN)
-    accuracy_orange = (TP + TN) / (TP + TN + FP + FN)
-    F1_orange = 2*TP / (2*TP + FP + FN)
-    FPR_orange = FP / (FP + TN)
-    print("Precision", precision_orange, "Recall", recall_orange, "Accuracy", accuracy_orange, "F1", F1_orange, "FPR", FPR_orange)
-    
-    precs_orange.append(precision_orange)
-    recs_orange.append(recall_orange)
-    accs_orange.append(accuracy_orange)
-    f1s_orange.append(F1_orange)
-    fprs_orange.append(FPR_orange)
-    #dist_noms_orange.append(mean_nominal_dist_orange)
-    #dist_anos_orange.append(mean_anomalous_dist_orange)
-    
-    
-    conf = confusion_matrix(gt, re_answers_orange)
-    print("After\n", conf)
-    
-    TP = conf[0,0]
-    TN = conf[1,1]
-    FP = conf[0,1]
-    FN = conf[1,0]
-    
-    precision_orange = TP / (TP + FP)
-    recall_orange = TP / (TP + FN)
-    accuracy_orange = (TP + TN) / (TP + TN + FP + FN)
-    F1_orange = 2*TP / (2*TP + FP + FN)
-    FPR_orange = FP / (FP + TN)
-    print("Precision", precision_orange, "Recall", recall_orange, "Accuracy", accuracy_orange, "F1", F1_orange, "FPR", FPR_orange)
-    
-    re_precs_orange.append(precision_orange)
-    re_recs_orange.append(recall_orange)
-    re_accs_orange.append(accuracy_orange)
-    re_f1s_orange.append(F1_orange)
-    re_fprs_orange.append(FPR_orange)
-    #re_dist_noms_orange.append(re_mean_nominal_dist_orange)
-    #re_dist_anos_orange.append(re_mean_anomalous_dist_orange)
-    
-    #attacks_before.append(sum(successful_attacks_test_before))
-    #attacks_after.append(sum(successful_attacks_test_after))
-    '''
-    '''
-    ##############store performances##############
-    if t:        
-        np.savetxt('prec_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', precs_blue)
-        np.savetxt('rec_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', recs_blue)
-        np.savetxt('acc_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', accs_blue)
-        np.savetxt('f1_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', f1s_blue)
-        np.savetxt('fpr_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', fprs_blue)
-        np.savetxt('dist_nom_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', dist_noms_blue)
-        np.savetxt('dist_ano_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', dist_anos_blue)
-        np.savetxt('started_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', started)
-        np.savetxt('introduced_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', introduced)
-        np.savetxt('attacks_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', attacks_before)
-        
-        np.savetxt('re_prec_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_precs_blue)
-        np.savetxt('re_rec_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_recs_blue)
-        np.savetxt('re_acc_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_accs_blue)
-        np.savetxt('re_f1_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_f1s_blue)
-        np.savetxt('re_fpr_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_fprs_blue)
-        np.savetxt('re_dist_nom_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_dist_noms_blue)
-        np.savetxt('re_dist_ano_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_dist_anos_blue)
-        np.savetxt('re_attacks_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', attacks_after)
-        np.savetxt('thresh_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', threshs)
-        
-        
-        np.savetxt('prec_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', precs_orange)
-        np.savetxt('rec_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', recs_orange)
-        np.savetxt('acc_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', accs_orange)
-        np.savetxt('f1_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', f1s_orange)
-        np.savetxt('fpr_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', fprs_orange)
-        np.savetxt('dist_nom_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', dist_noms_orange)
-        np.savetxt('dist_ano_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', dist_anos_orange)
-        np.savetxt('started_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', started)
-        np.savetxt('introduced_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', introduced)
-        np.savetxt('attacks_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', attacks_before)
-        
-        np.savetxt('re_prec_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_precs_orange)
-        np.savetxt('re_rec_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_recs_orange)
-        np.savetxt('re_acc_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_accs_orange)
-        np.savetxt('re_f1_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_f1s_orange)
-        np.savetxt('re_fpr_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_fprs_orange)
-        np.savetxt('re_dist_nom_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_dist_noms_orange)
-        np.savetxt('re_dist_ano_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', re_dist_anos_orange)
-        np.savetxt('re_attacks_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'_t.txt', attacks_after)
-        
-    else:
-        np.savetxt('prec_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', precs_blue)
-        np.savetxt('rec_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', recs_blue)
-        np.savetxt('acc_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', accs_blue)
-        np.savetxt('f1_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', f1s_blue)
-        np.savetxt('fpr_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', fprs_blue)
-        np.savetxt('dist_nom_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', dist_noms_blue)
-        np.savetxt('dist_ano_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', dist_anos_blue)
-        np.savetxt('started_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', started)
-        np.savetxt('introduced_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', introduced)
-        np.savetxt('attacks_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', attacks_before)
-        
-        np.savetxt('re_prec_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_precs_blue)
-        np.savetxt('re_rec_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_recs_blue)
-        np.savetxt('re_acc_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_accs_blue)
-        np.savetxt('re_f1_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_f1s_blue)
-        np.savetxt('re_fpr_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_fprs_blue)
-        np.savetxt('re_dist_nom_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_dist_noms_blue)
-        np.savetxt('re_dist_ano_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_dist_anos_blue)
-        np.savetxt('re_attacks_blue_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', attacks_after)
-        np.savetxt('thresh_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', threshs)
-        
-        np.savetxt('prec_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', precs_orange)
-        np.savetxt('rec_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', recs_orange)
-        np.savetxt('acc_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', accs_orange)
-        np.savetxt('f1_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', f1s_orange)
-        np.savetxt('fpr_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', fprs_orange)
-        np.savetxt('dist_nom_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', dist_noms_orange)
-        np.savetxt('dist_ano_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', dist_anos_orange)
-        np.savetxt('started_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', started)
-        np.savetxt('introduced_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', introduced)
-        np.savetxt('attacks_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', attacks_before)
-        
-        np.savetxt('re_prec_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_precs_orange)
-        np.savetxt('re_rec_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_recs_orange)
-        np.savetxt('re_acc_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_accs_orange)
-        np.savetxt('re_f1_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_f1s_orange)
-        np.savetxt('re_fpr_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_fprs_orange)
-        np.savetxt('re_dist_nom_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_dist_noms_orange)
-        np.savetxt('re_dist_ano_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', re_dist_anos_orange)
-        np.savetxt('re_attacks_orange_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', attacks_after)
-        np.savetxt('thresh_'+str(train_size)+'_'+str(it_aug)+'_'+str(max_states)+'.txt', threshs)
-    '''
+    thresh_df =  pd.DataFrame()
+    thresh_df['Tau before'] = threshs_before
+    thresh_df['Tau after'] = threshs_after
+    thresh_df.to_csv(f"taus_train_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
 
 
 if __name__ == '__main__':
+    
+    recognized_adv_methods = {'H':'Hellinger Distance', 'L':'Likelihood'}
+    
     path_train = sys.argv[1]
     path_test = sys.argv[2]
     path_gt = sys.argv[3]
-    w = sys.argv[4]
-    eps = sys.argv[5]
-    it_aug = sys.argv[6]
-    max_states = sys.argv[7]
-    adv_method = sys.argv[8]
+    output_dir = sys.argv[4]
+    train_sizes = sys.argv[5]
+    pca_components = sys.argv[6]
+    w = sys.argv[7]
+    eps = sys.argv[8]
+    it_aug = sys.argv[9]
+    max_states = sys.argv[10]
+    adv_method = sys.argv[11]
+    repetitions = sys.argv[12]
     
-    train(path_train, path_test, path_gt, w, eps, it_aug, max_states, adv_method)
+    if adv_method not in recognized_adv_methods:
+        print("Adversarial method in input is not recognized")
+        print("For now the list is", recognized_adv_methods)
+        sys.exit()
+    
+    train_sizes = train_sizes.strip().split(',')
+    
+    for train_size in train_sizes:
+        train(path_train, path_test, path_gt, output_dir, train_size, pca_components, w, eps, it_aug, max_states, adv_method, repetitions)
     
     
     
