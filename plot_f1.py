@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+"""
+This software is the implementation of the following article submitted to JAIR:
+	Castellini A., Masillo F., Azzalini D., Amigoni F., Farinelli A., Adversarial Data Augmentation for Anomaly Detection in Intelligent Autonomous Systems
+In this stage, the software is intended for reviewers' use only.
+"""
+
 import os
 import sys
 import numpy as np
@@ -36,7 +43,7 @@ plt.title('F1 score')
 plt.xticks(range(len(train_sizes)), train_sizes)
 plt.legend()
 plt.tight_layout()
-plt.savefig(f'{folder}/plot.pdf')
+plt.savefig(f'{folder}/plot_{adv_method}-AUG.pdf')
           
     
 

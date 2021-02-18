@@ -8,6 +8,11 @@ In order to try this software the user needs to create a conda environment (or a
 
 	conda env create -f env_setup.yml
 
+If the user needs some help with the installation of conda itself, please refer to https://docs.conda.io/projects/conda/en/latest/user-guide/install/.
+After the environment is finally created one needs to activate it by means of the following command (on a bash like terminal):
+
+	conda activate adv_data_aug_hmm
+
 Afterwards, the user needs to compile the Cython functions by means of the following command:
 
 	python setup_cython_function.py build_ext --inplace

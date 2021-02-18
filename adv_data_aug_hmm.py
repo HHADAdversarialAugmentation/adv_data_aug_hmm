@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Dec  4 00:06:38 2020
-
-@author: franc
+This software is the implementation of the following article submitted to JAIR:
+	Castellini A., Masillo F., Azzalini D., Amigoni F., Farinelli A., Adversarial Data Augmentation for Anomaly Detection in Intelligent Autonomous Systems
+    
+In this stage, the software is intended for reviewers' use only.
 """
 import warnings
 from gradient_functions import super_fast_grad_x_lkl#, evaluate_data
