@@ -1,6 +1,8 @@
 # adv_data_aug_hmm
 This software is the implementation of the following article submitted to JAIR:
-	Castellini A., Masillo F., Azzalini D., Amigoni F., Farinelli A., Adversarial Data Augmentation for Anomaly Detection in Intelligent Autonomous Systems
+
+Castellini A., Masillo F., Azzalini D., Amigoni F., Farinelli A., Adversarial Data Augmentation for Anomaly Detection in Intelligent Autonomous Systems
+
 In this stage, the software is intended for reviewers' use only.
 
 
