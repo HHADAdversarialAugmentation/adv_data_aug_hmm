@@ -57,3 +57,10 @@ If the user wishes to visualize a simple plot of F1 scores across train sizes fo
 	python plot_f1.py --result_dir my_result --adv_method H --train_sizes 250,500,750
 	
 It will output a pdf file in the result directory containing a simple plot with two lines representing the mean F1 scores (across repetitions for a given train size), one for the baseline model and one for the augmented one.
+
+
+To reproduce the first result of the paper we give the data of Tennessee-Eastman already split into train and test sets (with also ground truth information) in data folder. If the user is interested in other Tennessee-Eastman attacks presented in Aoudi et al. (2018) ruth will out: Departure-based process-leveldetection of stealthy attacks on control systems there is a dedicated repository that can be freely accessed at https://github.com/mikeliturbe/pasad.
+
+	python adv_data_aug_hmm.py --train data/te_sa1_train.csv --test data/te_sa1_test.csv 
+		--gt data/te_sa1_gt.csv --output_dir my_result --train_sizes 250,500,750,1000,1250,1500 
+		--pca 4 --w 100 --eps 0.05 --m 3 --max_states 15 --adv_method H --reps 30 --ncpus XX
