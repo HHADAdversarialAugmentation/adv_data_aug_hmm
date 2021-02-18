@@ -44,7 +44,7 @@ PARAMETERS:
 							  and 'L' (Likelihood based) methods (DEFAULT=H)
 	--reps [OPTIONAL] : number of repetitions of the whole process. If the train size specified is less than the total length 
 						of the train set then this is useful to see how starting from different time instants (taking a slice
-						from start to start+train_sizes of the data) can impact both on original and augmented performaces
+						from start index to start+train_sizes of the data) can impact both on original and augmented performaces
 						(DEFAULT=1)
 	--ncpus [OPTIONAL] : number of cpus that can be used for parallel execution of multiple train_sizes (DEFAULT=1)
 
