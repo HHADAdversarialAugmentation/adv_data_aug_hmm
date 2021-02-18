@@ -23,6 +23,7 @@ else:
 
 f1_before = []
 f1_after = []
+train_sizes = [int(t) for t in train_sizes]
 for train_size in sorted(train_sizes):
 	data = pd.read_csv(f"{folder}/f1_scores_train_size_{train_size}_adv_method_{adv_method}.csv")
 	f1_before.append(np.mean(data['F1 before']))

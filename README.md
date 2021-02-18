@@ -1,7 +1,10 @@
 # adv_data_aug_hmm
-Castellini A., Masillo F., Azzalini D., Amigoni F., Farinelli A., Adversarial Data Augmentation for Anomaly Detection in Intelligent Autonomous Systems
+This software is the implementation of the following article submitted to JAIR:
+	Castellini A., Masillo F., Azzalini D., Amigoni F., Farinelli A., Adversarial Data Augmentation for Anomaly Detection in Intelligent Autonomous Systems
+In this stage, the software is intended for reviewers' use only.
 
-In order to use this software the user needs to create a conda environment (or alternatively having a Python3.8 valid installation with all the dependencies) with the following command:
+
+In order to try this software the user needs to create a conda environment (or alternatively having a Python3.8 valid installation with all the dependencies) with the following command:
 
 	conda env create -f env_setup.yml
 
@@ -14,7 +17,7 @@ How to call the function (example):
 
 	python adv_data_aug_hmm.py --train data/dataset_train.csv --test data/dataset_test.csv 
 		--gt data/dataset_ground_truth.csv --output_dir my_result --train_sizes 250,500,750 
-		--pca 3 --w 100 --eps 0.05 --m 3 --max_states 10 --adv_method H --reps 10
+		--pca 4 --w 100 --eps 0.05 --m 3 --max_states 10 --adv_method H --reps 10 --ncpus 3
 
 PARAMETERS:
 
@@ -36,7 +39,7 @@ PARAMETERS:
 						of the train set then this is useful to see how starting from different time instants (taking a slice
 						from start to start+train_sizes of the data) can impact both on original and augmented performaces
 						(DEFAULT=1)
-
+	--ncpus [OPTIONAL] : number of cpus that can be used for parallel execution of multiple train_sizes (DEFAULT=1)
 
 OUTPUT:
 In the output directory the user should expect the following results:
@@ -47,10 +50,10 @@ In the output directory the user should expect the following results:
 	  This file has 2 columns (Tau before and Tau after) and #repetitions rows.
 	- a folder for each train size called models_train_size containing pickle files two for each repetition, i.e. the baseline model
 	  (e.g. model_1_HHAD.pkl) and the augmented model (e.g. model_1_H-AUG.pkl)
-	
+	- a log file with more information about the whole process
 
 If the user wishes to visualize a simple plot of F1 scores across train sizes for a given result, we make available a simple script called plot_f1.py. It can be called as following:
 
 	python plot_f1.py --result_dir my_result --adv_method H --train_sizes 250,500,750
 	
-It will output a plot with two lines for the mean F1 score (across repetitions for a given train size), one for the baseline model and one for the augmented one.
+It will output a pdf file in the result directory containing a simple plot with two lines representing the mean F1 scores (across repetitions for a given train size), one for the baseline model and one for the augmented one.

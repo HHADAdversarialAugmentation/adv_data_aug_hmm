@@ -89,7 +89,7 @@ def train(path_train, path_test, path_gt, output_dir, train_size, pca_components
         t = True #re-train threshold?
         
         data_train_ = pd.read_csv(path_train).values
-        data_test_ = pd.read_csv(path_test).values
+        data_test_ = pd.read_csv(path_test)
         gt = pd.read_csv(path_gt).values[w-1:]
         
         threshs_before = []
@@ -120,12 +120,11 @@ def train(path_train, path_test, path_gt, output_dir, train_size, pca_components
                 data_train = pca.fit_transform(data_train)
                 
                 data_test = sc.transform(data_test_)
-                data_test = pca.transform(data_test_)
+                data_test = pca.transform(data_test)
             
             else:
-                
                 data_test = data_test_
-                
+            
             ##############n states training##############
             print("Choosing optimal number of states with BIC")
             log.write("Choosing optimal number of states with BIC\n")
@@ -450,7 +449,7 @@ def train(path_train, path_test, path_gt, output_dir, train_size, pca_components
             print("Finished in", time.time() - start_time)
             log.write(f"Finished in {time.time() - start_time}\n")
             print("THRESHOLD AFTER AUGMENTATION", thresh)
-            log.write("THRESHOLD AFTER AUGMENTATION {thresh}\n")
+            log.write(f"THRESHOLD AFTER AUGMENTATION {thresh}\n")
             with open(f"models_train_{train_size}/model_{iteration}_{adv_method}-AUG.pkl", "wb") as file: pickle.dump(model, file)
             
             ##############re-evaluation on test set with augmented model##############
@@ -603,7 +602,7 @@ def train(path_train, path_test, path_gt, output_dir, train_size, pca_components
     thresh_df['Tau after'] = threshs_after
     thresh_df.to_csv(f"taus_train_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
 
-
+from multiprocessing import Pool
 if __name__ == '__main__':
     
     recognized_adv_methods = {'H':'Hellinger Distance', 'L':'Likelihood'}
@@ -611,22 +610,22 @@ if __name__ == '__main__':
     parameter_list = sys.argv
     
     if "--train" in parameter_list:
-        path_train = sys.argv[parameter_list.index("--train")+1]
+        path_train = os.path.abspath(sys.argv[parameter_list.index("--train")+1])
     else:
         print("Mandatory parameter --train not found please check input parameters")
         sys.exit()
     if "--test" in parameter_list:
-        path_test = sys.argv[parameter_list.index("--test")+1]
+        path_test = os.path.abspath(sys.argv[parameter_list.index("--test")+1])
     else:
         print("Mandatory parameter --test not found please check input parameters")
         sys.exit()
     if "--gt" in parameter_list:
-        path_gt = sys.argv[parameter_list.index("--gt")+1]
+        path_gt = os.path.abspath(sys.argv[parameter_list.index("--gt")+1])
     else:
         print("Mandatory parameter --gt not found please check input parameters")
         sys.exit()
     if "--output_dir" in parameter_list:
-        output_dir = sys.argv[parameter_list.index("--output_dir")+1]
+        output_dir = os.path.abspath(sys.argv[parameter_list.index("--output_dir")+1])
     else:
         print("Mandatory parameter --output_dir not found please check input parameters")
         sys.exit()
@@ -663,6 +662,10 @@ if __name__ == '__main__':
         repetitions = sys.argv[parameter_list.index("--reps")+1]
     else:
         repetitions = 1
+    if "--ncpus" in parameter_list:
+        ncpus = int(sys.argv[parameter_list.index("--ncpus")+1])
+    else:
+        ncpus = 1
     
     
     if adv_method not in recognized_adv_methods:
@@ -670,10 +673,16 @@ if __name__ == '__main__':
         print("For now the list is", recognized_adv_methods)
         sys.exit()
     
+    if not os.path.isdir(output_dir):
+        os.mkdir(output_dir)
+    
     train_sizes = train_sizes.strip().split(',')
     
-    for train_size in train_sizes:
-        train(path_train, path_test, path_gt, output_dir, train_size, pca_components, w, eps, it_aug, max_states, adv_method, repetitions)
+    querys = [(path_train, path_test, path_gt, output_dir, t, pca_components, w, eps, it_aug, max_states, adv_method, repetitions) for t in train_sizes]
+    with Pool(processes=ncpus) as pool:
+        pool.starmap(train, querys)
+    #for train_size in train_sizes:
+    #    train(path_train, path_test, path_gt, output_dir, train_size, pca_components, w, eps, it_aug, max_states, adv_method, repetitions)
     
     
     
