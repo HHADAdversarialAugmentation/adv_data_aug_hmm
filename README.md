@@ -28,9 +28,10 @@ How to call the function (example):
 
 PARAMETERS:
 
-	--train : path where train set is
-	--test : path where test set is
-	--gt : path where ground truth is
+	--train : path where train set is. This csv file must be shaped as a matrix with samples as rows and features as columns
+	--test : path where test set is. This csv file must be shaped as a matrix with samples as rows and features as columns
+	--gt : path where ground truth is. This csv file must be shaped as a single column with 0/1 values (0 for nominal and 1 for 
+		   anomalous behaviour). This length must be equal to the test size length
 	--output_dir : path where the user expects the output
 	--train_sizes : comma-separated list of lengths for slicing the train set into subsets
 	--pca [OPTIONAL] : number of PCA components to use, this is used to preprocess both train and test set. 
