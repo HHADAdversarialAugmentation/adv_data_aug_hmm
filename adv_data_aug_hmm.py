@@ -140,8 +140,8 @@ def train(path_train, path_test, path_gt, output_dir, train_size, pca_components
             print("Repetition #", iteration)
             log.write(f"Repetition #{iteration}\n")
             
-            np.random.seed((iteration+repetitions)*7)
-            #np.random.seed(iteration)
+            #np.random.seed((iteration+repetitions)*7)
+            np.random.seed(iteration)
             start = np.random.randint(0, data_train_.shape[0]-train_size)
             print(f"Training set starts at {start} and ends in {start+train_size}")
             log.write(f"Training set starts at {start} and ends in {start+train_size}\n")
