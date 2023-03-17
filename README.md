@@ -74,4 +74,5 @@ To reproduce the first result of the paper we give the data of Tennessee-Eastman
 
 	python adv_data_aug_hmm.py --train data/te_sa1_train.csv --test data/te_sa1_test.csv 
 		--gt data/te_sa1_gt.csv --output_dir my_result --train_sizes 250,500,750,1000,1250,1500 
-		--pca 4 --w 100 --eps 0.05 --m 3 --max_states 15 --adv_method H --competitor D,R,G,S,A,M,O --reps 30 --ncpus XX
+		--pca 4 --w 100 --eps 0.05 --m 3 --max_states 15 --adv_method H --competitor D,R,G,S,A,M,O 
+		--reps 30 --ncpus XX
