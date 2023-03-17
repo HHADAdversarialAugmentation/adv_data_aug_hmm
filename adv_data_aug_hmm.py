@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-This software is the implementation of the following article submitted to JAIR:
-	Castellini A., Masillo F., Azzalini D., Amigoni F., Farinelli A., Adversarial Data Augmentation for Anomaly Detection in Intelligent Autonomous Systems
+This software is the implementation of the following article submitted to TPAMI:
+	Castellini A., Masillo F., Azzalini D., Amigoni F., Farinelli A., Adversarial Data Augmentation for HMM-based Anomaly Detection
     
 In this stage, the software is intended for reviewers' use only.
 """
@@ -17,6 +17,22 @@ import os
 from sklearn.metrics import confusion_matrix
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from imblearn.over_sampling import SMOTE
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.metrics import mse
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import RepeatVector
+from tensorflow.keras.layers import TimeDistributed
+from keras import backend as bk
+from sklearn.svm import OneClassSVM
+from sklearn.metrics import mean_squared_error
+import tsaug
+from sklearn import metrics
+import matplotlib.pyplot as plt
 import pickle
 warnings.filterwarnings(action='ignore')
 
@@ -65,7 +81,7 @@ def BIC(size, n_states, n_comp, ll):
 
 
 
-def train(path_train, path_test, path_gt, output_dir, train_size, pca_components=4, w=100, eps=0.05, it_aug=3, max_states=25, adv_method='H', repetitions=1): 
+def train(path_train, path_test, path_gt, output_dir, train_size, pca_components=4, w=100, eps=0.05, it_aug=3, max_states=25, adv_method='H', competitors = ['D', 'O'], repetitions=1): 
 
     os.chdir(output_dir)
     os.system(f'mkdir models_train_{train_size}')
@@ -90,28 +106,51 @@ def train(path_train, path_test, path_gt, output_dir, train_size, pca_components
         t = True #re-train threshold?
         
         data_train_ = pd.read_csv(path_train).values
-        data_test_ = pd.read_csv(path_test)
-        gt = pd.read_csv(path_gt).values[w-1:]
+        data_test_ = pd.read_csv(path_test).values
+        gt_ = pd.read_csv(path_gt).values
         
         threshs_before = []
         threshs_after = []
+        precision_before = []
+        precision_after = []
+        recall_before = []
+        recall_after = []
+        accuracy_before = []
+        accuracy_after = []
         f1s_before = []
         f1s_after = []
+        kappa_before = []
+        kappa_after = []
         introduced = []
-        #attacks_before = []
-        #attacks_after = []
+        fprs_before = []
+        tprs_before = []
+        fprs_after = []
+        tprs_after = []
+        attacks_before = []
+        attacks_after = []
+        competitors_performances = dict()
+        for competitor in competitors:
+            competitors_performances[competitor] = dict()
+            competitors_performances[competitor]['precision'] = []
+            competitors_performances[competitor]['recall'] = []
+            competitors_performances[competitor]['accuracy'] = []
+            competitors_performances[competitor]['F1'] = []
+            competitors_performances[competitor]['kappa'] = []
         for iteration in range(repetitions):
             print("Repetition #", iteration)
             log.write(f"Repetition #{iteration}\n")
             
-            np.random.seed(iteration)
+            np.random.seed((iteration+repetitions)*7)
+            #np.random.seed(iteration)
             start = np.random.randint(0, data_train_.shape[0]-train_size)
             print(f"Training set starts at {start} and ends in {start+train_size}")
             log.write(f"Training set starts at {start} and ends in {start+train_size}\n")
             
-            data_train = data_train_[start:start+train_size]
+            
             
             if pca_components > 0:
+                data_train = data_train_[start:start+train_size]
+                print("data_train", data_train.shape)
                 sc = StandardScaler()
                 pca = PCA(n_components = pca_components)
                 
@@ -122,32 +161,49 @@ def train(path_train, path_test, path_gt, output_dir, train_size, pca_components
                 
                 data_test = sc.transform(data_test_)
                 data_test = pca.transform(data_test)
-            
+                
+                gt = gt_[w-1:]
             else:
+                print("No PCA performed")
+                data_train = data_train_[start:start+train_size]
                 data_test = data_test_
+                gt = gt_[w-1:]
             
             ##############n states training##############
             print("Choosing optimal number of states with BIC")
             log.write("Choosing optimal number of states with BIC\n")
-            BICs = []
-            for K in range(2,max_states):
+            pathModel = f"models_train_{train_size}/model_{iteration}_HHAD.pkl"
+            if not os.path.exists(pathModel):
+                print("Performing BIC")
+                BICs = []
+                for K in range(2,max_states):
+                    try:
+                        np.random.seed(0)
+                        model = hmm.GaussianHMM(n_components=K, covariance_type="diag", n_iter=100, random_state = 0).fit(data_train)
+                        ll_train, viterbi_train = model.decode(data_train)
+                        BICs.append(BIC(data_train.shape[0], K, 2*data_train.shape[1], ll_train))
+                    except:
+                        BICs.append(np.inf)
+                
+                K = np.argmin(BICs) + 2
+                print("N states from BIC", K)
+                log.write(f"N states from BIC {K}\n")
+                print("Model training")
+                log.write("Model training\n")
+                start = time.time()
+                model = hmm.GaussianHMM(n_components=K, covariance_type="diag", n_iter=100, random_state = 0)#, init_params='')
                 np.random.seed(0)
-                model = hmm.GaussianHMM(n_components=K, covariance_type="diag", n_iter=100, random_state = 0).fit(data_train)
-                ll_train, viterbi_train = model.decode(data_train)
-                BICs.append(BIC(data_train.shape[0], K, 2*data_train.shape[1], ll_train))
+                model.fit(data_train)
+                print("Trained in ", time.time()-start)
+                log.write(f"Trained in {time.time()-start}\n")
+                with open(f"models_train_{train_size}/model_{iteration}_HHAD.pkl", "wb") as file: pickle.dump(model, file)
+            else:
+                with open(pathModel, "rb") as file: 
+                    model = pickle.load(file)
+                K = model.n_components
+                print("Model loaded with", K, "states")
+                log.write(f"Model loaded with {K} states\n")
             
-            K = np.argmin(BICs) + 2
-            print("N states from BIC", K)
-            log.write(f"N states from BIC {K}\n")
-            print("Model training")
-            log.write("Model training\n")
-            start = time.time()
-            model = hmm.GaussianHMM(n_components=K, covariance_type="diag", n_iter=100, random_state = 0)#, init_params='')
-            np.random.seed(0)
-            model.fit(data_train)
-            print("Trained in ", time.time()-start)
-            log.write(f"Trained in {time.time()-start}\n")
-            with open(f"models_train_{train_size}/model_{iteration}_HHAD.pkl", "wb") as file: pickle.dump(model, file)
             
             ##############threshold training##############
             print("Threshold training")
@@ -281,6 +337,7 @@ def train(path_train, path_test, path_gt, output_dir, train_size, pca_components
                 
                 i += 1
             
+            print("Computing successful attacks")
             answers_blue = np.array(scores) > thresh #first array used after to calculate performances
             
             successful_attacks_test_before = np.bitwise_and(np.array(re_scores)[np.where(gt == 0)[0]] >= thresh, np.array(scores)[np.where(gt == 0)[0]] < thresh)
@@ -565,6 +622,296 @@ def train(path_train, path_test, path_gt, output_dir, train_size, pca_components
             print("Successful attacks after", sum(successful_attacks_test_after))
             log.write(f"Successful attacks after {sum(successful_attacks_test_after)}\n")
             
+            
+            ##############anomaly detection with competitors##############
+            for competitor in competitors:
+                ###OTHER DETECTORS###
+                if competitor == 'A':
+                    print('AUTOENCORER-VANILLA')
+                    ae_train = []
+                    
+                    i = w
+                    while(i <= data_train.shape[0]):
+                        ae_train.append((data_train[i-w:i].copy()).flatten())
+                        i += 1
+                
+                    ae_train = np.array(ae_train)
+                    
+                    input_ts = keras.Input(shape=(w*data_train.shape[1],))
+                    encoded = layers.Dense(128, activation='relu')(input_ts)
+                    encoded = layers.Dense(64, activation='relu')(encoded)
+                    encoded = layers.Dense(32, activation='relu')(encoded)
+                    decoded = layers.Dense(64, activation='relu')(encoded)
+                    decoded = layers.Dense(128, activation='relu')(decoded)
+                    decoded = layers.Dense(w*data_train.shape[1], activation='linear')(decoded)
+                
+                    autoencoder = keras.Model(input_ts, decoded)
+                    autoencoder.compile(optimizer='adam', loss='mean_squared_error')
+                    
+                    autoencoder.fit(ae_train, ae_train, epochs=100, batch_size=32, shuffle=True, verbose=0)
+                
+                    ##############threshold training##############
+                    #print("Threshold training")
+                    reconstructed_train = autoencoder.predict(ae_train)
+                    
+                    reconstruction_errors = [mean_squared_error(ae_train[i], reconstructed_train[i]) for i in range(len(ae_train))]
+                    thresh = np.max(reconstruction_errors) + (1/10*eps)
+                    
+                    i = w
+                    ae_test = []
+                    while(i <= data_test.shape[0]): #
+                        Wt = data_test[i-w:i].copy().flatten()
+                        ae_test.append(Wt)#.reshape((1,400))
+                
+                        i += 1
+                
+                    ae_test = np.array(ae_test)
+                    reconstructed_test = autoencoder.predict(ae_test, verbose=1)
+                    
+                    scores = [mean_squared_error(ae_test[i], reconstructed_test[i]) for i in range(len(ae_test))]
+                    answers_competitor = np.array(scores) > thresh #first array used after to calculate performances
+                    
+                    ##############compute performances##############
+                
+                    conf = confusion_matrix(gt, answers_competitor)
+                
+                    TP = conf[0,0]
+                    TN = conf[1,1]
+                    FP = conf[0,1]
+                    FN = conf[1,0]
+                    
+                    precision = TP / (TP + FP)
+                    recall = TP / (TP + FN)
+                    accuracy = (TP + TN) / (TP + TN + FP + FN)
+                    F1 = 2*TP / (2*TP + FP + FN)
+                    kappa = (2*(TP*TN - FN*FP)) / ((TP+FP)*(FP+TN) + (TP+FN)*(FN+TN))
+                    
+                    competitors_performances[competitor]['precision'].append(precision)
+                    competitors_performances[competitor]['recall'].append(recall)
+                    competitors_performances[competitor]['accuracy'].append(accuracy)
+                    competitors_performances[competitor]['F1'].append(F1)
+                    competitors_performances[competitor]['kappa'].append(kappa)
+                    
+                    continue
+                elif competitor == 'M':
+                    print("AUTOENCODER LSTM")
+                    ae_train = []
+                    
+                    i = w
+                    while(i <= data_train.shape[0]):
+                        ae_train.append(data_train[i-w:i].copy())
+                        i += 1
+                
+                    ae_train = np.array(ae_train)
+
+                    LSTM_model = Sequential()
+                    LSTM_model.add(LSTM(128, activation='tanh', input_shape=(w,data_train.shape[1]), return_sequences=True))
+                    LSTM_model.add(LSTM(64, activation='tanh', return_sequences=False))
+                    LSTM_model.add(RepeatVector(w))
+                    LSTM_model.add(LSTM(64, activation='tanh', return_sequences=True))
+                    LSTM_model.add(LSTM(128, activation='tanh', return_sequences=True))
+                    LSTM_model.add(TimeDistributed(Dense(data_train.shape[1])))
+                    
+                    LSTM_model.compile(optimizer='adam', loss='mse')
+                    
+                    LSTM_model.fit(ae_train, ae_train, epochs=30, batch_size=128, verbose=0)
+                
+                    reconstructed_train = LSTM_model.predict(ae_train)
+                    reconstruction_errors = [np.mean(mean_squared_error(ae_train[i], reconstructed_train[i])) for i in range(len(ae_train))]
+                    thresh = np.max(reconstruction_errors) + (1/10*eps)
+                        
+                    ae_test= []
+                    
+                    i = w
+                    while(i <= data_test.shape[0]):
+                        ae_test.append((data_test[i-w:i].copy()))
+                        i += 1
+                
+                    ae_test = np.array(ae_test)
+                    
+                    reconstructed_test = LSTM_model.predict(ae_test)
+
+                    scores = [np.mean(mean_squared_error(ae_test[i], reconstructed_test[i])) for i in range(len(ae_test))]
+                    
+                    answers_competitor = np.array(scores) > thresh #first array used after to calculate performances
+                    
+                    ##############compute performances##############
+                
+                    conf = confusion_matrix(gt, answers_competitor.reshape((-1, 1)))
+                
+                    TP = conf[0,0]
+                    TN = conf[1,1]
+                    FP = conf[0,1]
+                    FN = conf[1,0]
+                    
+                    precision = TP / (TP + FP)
+                    recall = TP / (TP + FN)
+                    accuracy = (TP + TN) / (TP + TN + FP + FN)
+                    F1 = 2*TP / (2*TP + FP + FN)
+                    kappa = (2*(TP*TN - FN*FP)) / ((TP+FP)*(FP+TN) + (TP+FN)*(FN+TN))
+                    
+                    competitors_performances[competitor]['precision'].append(precision)
+                    competitors_performances[competitor]['recall'].append(recall)
+                    competitors_performances[competitor]['accuracy'].append(accuracy)
+                    competitors_performances[competitor]['F1'].append(F1)
+                    competitors_performances[competitor]['kappa'].append(kappa)
+                    
+                    continue
+                elif competitor == 'O':
+                    print("ONECLASS-SVM")
+                    ae_train = []
+                    
+                    i = w
+                    while(i <= data_train.shape[0]):
+                        ae_train.append((data_train[i-w:i].copy()).flatten())
+                        i += 1
+
+                    ae_train = np.array(ae_train)
+                    
+                    one_class_svm = OneClassSVM(nu=0.0001, kernel = 'rbf', gamma = 'auto').fit(ae_train)
+                    
+                    i = w
+                    ae_test = []
+                    while(i <= data_test.shape[0]): #
+                        Wt = data_test[i-w:i].copy().flatten()
+                        ae_test.append(Wt)
+                        i += 1
+                
+                    prediction = one_class_svm.predict(ae_test)
+                    # Change the anomalies' values to make it consistent with the true values
+                    prediction = [1 if i==-1 else 0 for i in prediction]
+                    
+                    answers_competitor = prediction #first array used after to calculate performances
+                    
+                    conf = confusion_matrix(gt, answers_competitor)
+                
+                    TP = conf[0,0]
+                    TN = conf[1,1]
+                    FP = conf[0,1]
+                    FN = conf[1,0]
+                    
+                    precision = TP / (TP + FP)
+                    recall = TP / (TP + FN)
+                    accuracy = (TP + TN) / (TP + TN + FP + FN)
+                    F1 = 2*TP / (2*TP + FP + FN)
+                    kappa = (2*(TP*TN - FN*FP)) / ((TP+FP)*(FP+TN) + (TP+FN)*(FN+TN))
+                    
+                    competitors_performances[competitor]['precision'].append(precision)
+                    competitors_performances[competitor]['recall'].append(recall)
+                    competitors_performances[competitor]['accuracy'].append(accuracy)
+                    competitors_performances[competitor]['F1'].append(F1)
+                    competitors_performances[competitor]['kappa'].append(kappa)
+                    continue
+                
+                ###AUGMENTERS###
+                windows_introduced = 0
+                data_augmented = np.concatenate([data_train])
+                lengths = [len(data_train)]
+
+                i = w
+                                
+                if competitor == 'S':
+                    print("SMOTE")
+                    windows = []
+                    while(i <= data_train.shape[0]):
+                        Wt = data_train[i-w:i].copy()
+                        windows.append(Wt.flatten())
+                        i+=1
+                    ratio_number_of_new_windows = 0.05
+                    windows_extended = windows + [windows[0]]*(int(np.ceil(len(windows)*ratio_number_of_new_windows))+len(windows))
+                    gt_windows = np.zeros(len(windows_extended))
+                    gt_windows[len(windows)+1:] = 1
+                    oversampler = SMOTE(sampling_strategy = 'not majority')
+                    windows_resampled, gt_windows_resampled = oversampler.fit_resample(windows_extended, gt_windows)
+                    
+                    for i_window in range(len(windows_extended), len(windows_resampled)):
+                        lengths.append(w)
+                        Wt_new = np.reshape(windows_resampled[i_window], (-1,data_train.shape[1]))
+                        data_augmented = np.concatenate([data_augmented, Wt_new])
+                else: 
+                    while(i <= data_train.shape[0]): #        
+                        if i%20 == 0:
+                            Wt = data_train[i-w:i].copy()
+            
+                            Wt_tmp = Wt.copy()
+            
+                            if competitor == 'D':
+                                #print("DRIFT")
+                                Wt_new = np.array([tsaug.Drift(max_drift=0.05, n_drift_points=5).augment(Wt_tmp.T[dimension]) for dimension in range(data_train.shape[1])]).T
+                            elif competitor == 'R':
+                                #print("UNIFORM")
+                                Wt_new = np.array([tsaug.AddNoise(distr='uniform', scale=0.02).augment(Wt_tmp.T[dimension]) for dimension in range(data_train.shape[1])]).T
+                            elif competitor == 'G':
+                                #print("GAUSSIAN")
+                                Wt_new = np.array([tsaug.AddNoise(scale=0.02).augment(Wt_tmp.T[dimension]) for dimension in range(data_train.shape[1])]).T
+                            else:
+                                exit()
+            
+                            lengths.append(w)    
+                            data_augmented = np.concatenate([data_augmented, Wt_new])
+                            windows_introduced = windows_introduced + 1
+                            
+                        i += 1
+                        
+                np.random.seed(0)
+                model.fit(data_augmented, lengths)
+                    
+                if t:
+                ###############threshold re-training###############
+                            
+                    i = w
+                    scores = []
+                    while(i <= data_train.shape[0]): 
+                        Wt = data_train[i-w:i].copy()
+                        ll, St = model.decode(Wt)
+                        st = stats.mode(St)[0]
+                        X = Wt[St == st]
+                        mu = np.reshape(np.mean(X, axis=0), [1, data_test.shape[1]])
+                        cov = (np.diag(np.cov(X.T)) + 1e-5) * np.eye(data_test.shape[1], data_test.shape[1])
+                        score = hellinger_dist(model.means_[st], model.covars_[st][0], mu, cov)
+                                
+                        scores.append(score)
+                        i += 1
+                                
+                    #if np.max(scores) + (1/10*eps) > thresh:
+                    thresh = np.max(scores) + (1/10*eps)
+                            
+                i = w
+                scores = [] #scores must contain the collection of normal scores
+                re_scores = [] #re_scores must contain the collection of adversarial scores
+                while(i <= data_test.shape[0]): #
+                    current_eps = eps/10
+                    Wt = data_test[i-w:i].copy()
+                    ll, St = model.decode(Wt)
+                    st = stats.mode(St)[0]
+                    X = Wt[St == st]
+                    mu = np.reshape(np.mean(X, axis=0), [1, data_test.shape[1]])
+                    cov = (np.diag(np.cov(X.T)) + 1e-5) * np.eye(data_test.shape[1], data_test.shape[1])
+                    score = hellinger_dist(model.means_[st], model.covars_[st][0], mu, cov)
+                    scores.append(score)
+                    
+                    i += 1
+                
+                answers_competitor = np.array(scores) > thresh
+                conf = confusion_matrix(gt, answers_competitor)
+                
+                TP = conf[0,0]
+                TN = conf[1,1]
+                FP = conf[0,1]
+                FN = conf[1,0]
+                
+                precision = TP / (TP + FP)
+                recall = TP / (TP + FN)
+                accuracy = (TP + TN) / (TP + TN + FP + FN)
+                F1 = 2*TP / (2*TP + FP + FN)
+                kappa = (2*(TP*TN - FN*FP)) / ((TP+FP)*(FP+TN) + (TP+FN)*(FN+TN))
+                
+                competitors_performances[competitor]['precision'].append(precision)
+                competitors_performances[competitor]['recall'].append(recall)
+                competitors_performances[competitor]['accuracy'].append(accuracy)
+                competitors_performances[competitor]['F1'].append(F1)
+                competitors_performances[competitor]['kappa'].append(kappa)
+            
             ##############compute performances##############
             
             conf = confusion_matrix(gt, answers_blue)
@@ -574,10 +921,18 @@ def train(path_train, path_test, path_gt, output_dir, train_size, pca_components
             FP = conf[0,1]
             FN = conf[1,0]
             
+            precision = TP / (TP + FP)
+            recall = TP / (TP + FN)
+            accuracy = (TP + TN) / (TP + TN + FP + FN)
             F1_blue = 2*TP / (2*TP + FP + FN)
+            kappa = (2*(TP*TN - FN*FP)) / ((TP+FP)*(FP+TN) + (TP+FN)*(FN+TN))
             print("F1 before", F1_blue)
             log.write(f"F1 before {F1_blue}\n")
+            precision_before.append(precision)
+            recall_before.append(recall)
+            accuracy_before.append(accuracy)
             f1s_before.append(F1_blue)
+            kappa_before.append(kappa)
             
             conf = confusion_matrix(gt, re_answers_blue)
             
@@ -586,27 +941,80 @@ def train(path_train, path_test, path_gt, output_dir, train_size, pca_components
             FP = conf[0,1]
             FN = conf[1,0]
             
+            precision = TP / (TP + FP)
+            recall = TP / (TP + FN)
+            accuracy = (TP + TN) / (TP + TN + FP + FN)
             F1_blue = 2*TP / (2*TP + FP + FN)
+            kappa = (2*(TP*TN - FN*FP)) / ((TP+FP)*(FP+TN) + (TP+FN)*(FN+TN))
             print("F1 after", F1_blue)
             log.write(f"F1 after {F1_blue}\n")
+            precision_after.append(precision)
+            recall_after.append(recall)
+            accuracy_after.append(accuracy)
             f1s_after.append(F1_blue)
+            kappa_after.append(kappa)
             
             log.write("\n")
-        
+    
+    precision_df = pd.DataFrame()
+    precision_df['HHAD'] = precision_before
+    precision_df[f'{adv_method}-AUG'] = precision_after
+    for competitor in competitors:
+        precision_df[f'{competitor}'] = competitors_performances[competitor]['precision']
+    precision_df.to_csv(f"precision_scores_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
+
+    recall_df = pd.DataFrame()
+    recall_df['HHAD'] = recall_before
+    recall_df[f'{adv_method}-AUG'] = recall_after
+    for competitor in competitors:
+        recall_df[f'{competitor}'] = competitors_performances[competitor]['recall']
+    recall_df.to_csv(f"recall_scores_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
+
+    accuracy_df = pd.DataFrame()
+    accuracy_df['HHAD'] = accuracy_before
+    accuracy_df[f'{adv_method}-AUG'] = accuracy_after
+    for competitor in competitors:
+        accuracy_df[f'{competitor}'] = competitors_performances[competitor]['accuracy']
+    accuracy_df.to_csv(f"accuracy_scores_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
+
     f1_df = pd.DataFrame()
-    f1_df['F1 before'] = f1s_before
-    f1_df['F1 after'] = f1s_after
+    f1_df['HHAD'] = f1s_before
+    f1_df[f'{adv_method}-AUG'] = f1s_after
+    for competitor in competitors:
+        f1_df[f'{competitor}'] = competitors_performances[competitor]['F1']
     f1_df.to_csv(f"f1_scores_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
+    
+    kappa_df = pd.DataFrame()
+    kappa_df['HHAD'] = kappa_before
+    kappa_df[f'{adv_method}-AUG'] = kappa_after
+    for competitor in competitors:
+        kappa_df[f'{competitor}'] = competitors_performances[competitor]['kappa']
+    kappa_df.to_csv(f"kappa_scores_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
     
     thresh_df =  pd.DataFrame()
     thresh_df['Tau before'] = threshs_before
     thresh_df['Tau after'] = threshs_after
     thresh_df.to_csv(f"taus_train_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
+    
+    '''
+    fpr_df = pd.DataFrame(fprs_before, columns=['FPR before'])
+    fpr_df.to_csv(f"fpr_before_train_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
+    fpr_df = pd.DataFrame(fprs_after, columns=['FPR after'])
+    fpr_df.to_csv(f"fpr_after_train_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
+    
+    tpr_df = pd.DataFrame(tprs_before, columns=['TPR before'])
+    tpr_df.to_csv(f"tpr_before_train_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
+    tpr_df = pd.DataFrame(tprs_after, columns=['TPR after'])
+    tpr_df.to_csv(f"tpr_after_train_train_size_{train_size}_adv_method_{adv_method}.csv", index=False)
+    '''
 
 from multiprocessing import Pool
 if __name__ == '__main__':
     
     recognized_adv_methods = {'H':'Hellinger Distance', 'L':'Likelihood'}
+    
+    recognized_competitors = {'D': 'Drift-augmenter', 'R': 'Uniform-augmenter', 'G': 'Gaussian-augmenter', 'S': 'SMOTE', 
+                              'A': 'AutoEncoder-vanilla', 'M': 'LSTM-AutoEncoder', 'O': 'OneClass-SVM'}
     
     parameter_list = sys.argv
     
@@ -659,6 +1067,10 @@ if __name__ == '__main__':
         adv_method = sys.argv[parameter_list.index("--adv_method")+1]
     else:
         adv_method = 'H'
+    if "--competitor" in parameter_list:
+        competitors = sys.argv[parameter_list.index("--competitor")+1]
+    else:
+        competitors = 'D,O'
     if "--reps" in parameter_list:
         repetitions = sys.argv[parameter_list.index("--reps")+1]
     else:
@@ -678,16 +1090,12 @@ if __name__ == '__main__':
         os.mkdir(output_dir)
     
     train_sizes = train_sizes.strip().split(',')
+    competitors = competitors.strip().split(',')
+    #print(competitors)
     
-    querys = [(path_train, path_test, path_gt, output_dir, t, pca_components, w, eps, it_aug, max_states, adv_method, repetitions) for t in train_sizes]
+    querys = [(path_train, path_test, path_gt, output_dir, t, pca_components, w, eps, it_aug, max_states, adv_method, competitors, repetitions) for t in train_sizes]
     with Pool(processes=ncpus) as pool:
         pool.starmap(train, querys)
     #for train_size in train_sizes:
     #    train(path_train, path_test, path_gt, output_dir, train_size, pca_components, w, eps, it_aug, max_states, adv_method, repetitions)
-    
-    
-    
-    
-    
-    
     
