@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-This software is the implementation of the following article submitted to JAIR:
-	Castellini A., Masillo F., Azzalini D., Amigoni F., Farinelli A., Adversarial Data Augmentation for Anomaly Detection in Intelligent Autonomous Systems
+This software is the implementation of the following article submitted to TPAMI:
+	Castellini A., Masillo F., Azzalini D., Amigoni F., Farinelli A., Adversarial Data Augmentation for HMM-based Anomaly Detection
 In this stage, the software is intended for reviewers' use only.
 """
 
@@ -28,23 +28,32 @@ else:
 	print("Mandatory parameter --train_sizes not found please check input parameters")
 	sys.exit() 
 
-f1_before = []
-f1_after = []
+
+
 train_sizes = [int(t) for t in train_sizes]
+f1s = [] * len(train_sizes)
+
+
 for train_size in sorted(train_sizes):
-	data = pd.read_csv(f"{folder}/f1_scores_train_size_{train_size}_adv_method_{adv_method}.csv")
-	f1_before.append(np.mean(data['F1 before']))
-	f1_after.append(np.mean(data['F1 after']))
-    
+    f1 = []
+    data = pd.read_csv(f"{folder}/f1_scores_train_size_{train_size}_adv_method_{adv_method}.csv")
+    for col in data.columns:
+        f1.append(np.nanmean(data[col]))
+    f1s.append(f1)
+
 plt.figure()
-plt.plot(f1_before, label='original')
-plt.plot(f1_after, label='augmented')
+for i, col in enumerate(data.columns):
+    to_plot = []
+    for j, train_size in enumerate(sorted(train_sizes)):
+        to_plot.append(f1s[j][i])
+    if len(train_sizes) == 1:
+        plt.scatter(train_sizes, to_plot, label=col)
+    else:
+        plt.plot(to_plot, label=col)
+
 plt.title('F1 score')
-plt.xticks(range(len(train_sizes)), train_sizes)
+if len(train_sizes) != 1:
+    plt.xticks(range(len(train_sizes)), train_sizes)
 plt.legend()
 plt.tight_layout()
 plt.savefig(f'{folder}/plot_{adv_method}-AUG.pdf')
-          
-    
-
-
