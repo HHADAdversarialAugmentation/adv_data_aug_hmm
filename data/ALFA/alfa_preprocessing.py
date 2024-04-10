@@ -1,5 +1,11 @@
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 
 if __name__ == "__main__":
+    train_size = 750 # in the paper we tested [250, 500, 750, 1000, 1250, 1500]
+    w = 100 # window size
     data = pd.read_csv('alfa_dataset.csv')
     data = data.iloc[:,:]
     data = data[['time', 'pitch_measured', 'label', 'airspeed_measured', 'velocity_z', 'orientation_x', 'orientation_y', 'orientation_z', 'orientation_w', 'linear_acceleration_x', 'linear_acceleration_y', 'linear_acceleration_z', 'airspeed', 'groundspeed', 'throttle', 'altitude', 'climb']]
